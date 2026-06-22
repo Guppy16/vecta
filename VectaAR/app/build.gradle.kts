@@ -1,7 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+val localProperties = Properties()
+val localPropertiesFile = rootProject.file("local.properties")
+if (localPropertiesFile.exists()) {
+    localProperties.load(localPropertiesFile.inputStream())
+}
+val serverIp: String = localProperties.getProperty("SERVER_IP")
+    ?: error("🔥 BUILD FAILED: SERVER_IP is missing! Please add SERVER_IP=\"100.x.x.x\" to your local.properties file.")
 
 android {
     namespace = "com.example.vectaar"
@@ -19,6 +29,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "SERVER_IP", serverIp)
     }
 
     buildTypes {
@@ -34,6 +46,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 
@@ -58,4 +71,7 @@ dependencies {
 
     // Sceneview for Compose (Modern AR rendering)
     implementation("io.github.sceneview:arsceneview:4.18.0")
+
+    // Websockets
+    implementation("com.squareup.okhttp3:okhttp:5.4.0")
 }
