@@ -1,8 +1,9 @@
 package com.example.vectaar
-import com.example.vectaar.BuildConfig
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
@@ -12,7 +13,9 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -20,14 +23,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
 import okhttp3.*
 import okio.ByteString.Companion.toByteString
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.nio.ByteBuffer
 import kotlin.time.Duration.Companion.seconds
+import androidx.compose.material3.ButtonDefaults // Added for visual toggle state
 
 class MainActivity : ComponentActivity() {
 
@@ -64,8 +71,10 @@ fun ARScreen() {
     var trackingStatus by remember { mutableStateOf("Initializing AR...") }
     var isStreaming by remember { mutableStateOf(false) }
     var serverLogs by remember { mutableStateOf("Disconnected") }
+    var roundtripLatency by remember { mutableStateOf("Latency: -- ms") }
 
-    // Server configurations (Replace with your Python server IP)
+    var scaleFactor by remember { mutableIntStateOf(1) }
+
     val ip = BuildConfig.SERVER_IP
     val serverUrl = "ws://$ip/ws"
     val pingUrl = "http://$ip/ping"
@@ -85,15 +94,29 @@ fun ARScreen() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 serverLogs = "Connected to WebSocket"
             }
+
             override fun onMessage(webSocket: WebSocket, text: String) {
-                serverLogs = "Received: $text"
+                try {
+                    val json = JSONObject(text)
+                    if (json.has("timestamp")) {
+                        val sentTime = json.getLong("timestamp")
+                        val rtt = System.currentTimeMillis() - sentTime
+                        roundtripLatency = "Latency: ${rtt} ms"
+                    }
+                    serverLogs = "Received: $text"
+                } catch (e: Exception) {
+                    serverLogs = "JSON Parse Error"
+                }
             }
+
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 serverLogs = "Closing: $reason"
             }
+
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 serverLogs = "Error: ${t.localizedMessage}"
                 isStreaming = false
+                roundtripLatency = "Latency: -- ms"
             }
         }
     }
@@ -106,6 +129,7 @@ fun ARScreen() {
             webSocket?.close(1000, "User stopped stream")
             webSocket = null
             serverLogs = "Stream Stopped"
+            roundtripLatency = "Latency: -- ms"
         }
     }
 
@@ -129,9 +153,16 @@ fun ARScreen() {
 
                         try {
                             frame.acquireCameraImage().use { image ->
-                                val jpegBytes = ImageUtils.yuv420ToJpeg(image)
-                                jpegBytes?.let {
-                                    webSocket?.send(it.toByteString())
+                                // Downsample factor of 4 (1920x1080 -> 480x270)
+                                val smallJpegBytes = ImageUtils.yuv420ToDownsampledJpeg(image, scaleFactor)
+
+                                smallJpegBytes?.let { jpeg ->
+                                    // Allocate space for 8 bytes (Long timestamp) + image bytes
+                                    val buffer = ByteBuffer.allocate(8 + jpeg.size)
+                                    buffer.putLong(currentTime)
+                                    buffer.put(jpeg)
+
+                                    webSocket?.send(buffer.array().toByteString())
                                 }
                             }
                         } catch (e: Exception) {
@@ -142,6 +173,22 @@ fun ARScreen() {
             }
         )
 
+        // Latency Overlay Box (Top Right Corner)
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 48.dp, end = 16.dp)
+                .background(Color.Black.copy(alpha = 0.7f), shape = RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = roundtripLatency,
+                color = if (roundtripLatency.contains("--")) Color.White else Color.Cyan,
+                fontSize = 14.sp
+            )
+        }
+
+        // Control Panel UI (Bottom Center)
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -152,6 +199,24 @@ fun ARScreen() {
         ) {
             Text(text = trackingStatus, color = Color.Green)
             Text(text = serverLogs, color = Color.Yellow)
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(4.dp)
+            ) {
+                listOf(1, 2, 4).forEach { factor ->
+                    Button(
+                        onClick = { scaleFactor = factor },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (scaleFactor == factor) Color.Cyan else Color.Transparent,
+                            contentColor = if (scaleFactor == factor) Color.Black else Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(text = "${factor}X")
+                    }
+                }
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
@@ -180,7 +245,7 @@ fun ARScreen() {
 }
 
 object ImageUtils {
-    fun yuv420ToJpeg(image: Image): ByteArray? {
+    fun yuv420ToDownsampledJpeg(image: Image, scaleFactor: Int): ByteArray? {
         if (image.format != ImageFormat.YUV_420_888) return null
 
         val planes = image.planes
@@ -188,35 +253,54 @@ object ImageUtils {
         val uBuffer = planes[1].buffer
         val vBuffer = planes[2].buffer
 
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
+        // Calculate the new downscaled dimensions
+        val newWidth = image.width / scaleFactor
+        val newHeight = image.height / scaleFactor
 
-        val nv21 = ByteArray(ySize + (image.width * image.height / 2))
+        // Allocate a much smaller byte array exactly the size of our target resolution
+        val ySize = newWidth * newHeight
+        val nv21 = ByteArray(ySize + (ySize / 2))
 
-        yBuffer.get(nv21, 0, ySize)
+        val yRowStride = planes[0].rowStride
+        val yPixelStride = planes[0].pixelStride
 
-        val outOffset = ySize
+        var outIdx = 0
+
+        // 1. Extract Y-Plane (Luminance/Grayscale) by skipping pixels
+        for (row in 0 until newHeight) {
+            val srcRow = row * scaleFactor
+            for (col in 0 until newWidth) {
+                val srcCol = col * scaleFactor
+                val pos = (srcRow * yRowStride) + (srcCol * yPixelStride)
+                nv21[outIdx++] = yBuffer.get(pos)
+            }
+        }
+
         val uRowStride = planes[1].rowStride
-        val vRowStride = planes[2].rowStride
         val uPixelStride = planes[1].pixelStride
+        val vRowStride = planes[2].rowStride
         val vPixelStride = planes[2].pixelStride
 
-        var outIdx = outOffset
-        for (row in 0 until image.height / 2) {
-            for (col in 0 until image.width / 2) {
-                val uPos = row * uRowStride + col * uPixelStride
-                val vPos = row * vRowStride + col * vPixelStride
+        // 2. Extract U and V planes (Color) - these are already half-resolution in YUV_420
+        for (row in 0 until newHeight / 2) {
+            val srcRow = row * scaleFactor
+            for (col in 0 until newWidth / 2) {
+                val srcCol = col * scaleFactor
 
+                val uPos = (srcRow * uRowStride) + (srcCol * uPixelStride)
+                val vPos = (srcRow * vRowStride) + (srcCol * vPixelStride)
+
+                // NV21 format expects V then U interleaved
                 nv21[outIdx++] = vBuffer.get(vPos)
                 nv21[outIdx++] = uBuffer.get(uPos)
             }
         }
 
+        // 3. Perform a SINGLE JPEG compression on the already-shrunken byte array
         val out = ByteArrayOutputStream()
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, image.width, image.height, null)
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, newWidth, newHeight, null)
+        yuvImage.compressToJpeg(Rect(0, 0, newWidth, newHeight), 80, out)
 
-        yuvImage.compressToJpeg(Rect(0, 0, image.width, image.height), 75, out)
         return out.toByteArray()
     }
 }
