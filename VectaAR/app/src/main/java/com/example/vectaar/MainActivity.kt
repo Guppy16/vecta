@@ -13,55 +13,62 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.google.android.filament.LightManager
+import com.google.ar.core.Plane
+import com.google.ar.core.Pose
 import com.google.ar.core.TrackingState
 import io.github.sceneview.ar.ARSceneView
+import io.github.sceneview.ar.node.AnchorNode
+import io.github.sceneview.node.LightNode
+import io.github.sceneview.node.ModelNode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import okhttp3.*
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.seconds
-import androidx.compose.material3.ButtonDefaults // Added for visual toggle state
+import io.github.sceneview.rememberEngine
+import io.github.sceneview.rememberModelLoader
+import io.github.sceneview.rememberModelInstance
 
 class MainActivity : ComponentActivity() {
-
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) recreate()
-    }
+    ) { isGranted: Boolean -> if (isGranted) recreate() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val hasCameraPermission = ContextCompat.checkSelfPermission(
             this, Manifest.permission.CAMERA
         ) == PackageManager.PERMISSION_GRANTED
-
-        if (!hasCameraPermission) {
-            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-
+        if (!hasCameraPermission) requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         setContent {
-            if (hasCameraPermission) {
-                ARScreen()
-            } else {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Camera permission required for AR.")
-                }
-            }
+            if (hasCameraPermission) ARScreen()
+            else Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Camera permission required.") }
         }
     }
 }
@@ -72,134 +79,304 @@ fun ARScreen() {
     var isStreaming by remember { mutableStateOf(false) }
     var serverLogs by remember { mutableStateOf("Disconnected") }
     var roundtripLatency by remember { mutableStateOf("Latency: -- ms") }
-
     var scaleFactor by remember { mutableIntStateOf(1) }
+
+    val targetCoord = remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var targetName by remember { mutableStateOf("") }
+
+    var hitAnchor by remember { mutableStateOf<com.google.ar.core.Anchor?>(null) }
+
+    // --- DEBUG INDICATOR STATE ---
+    var debugDotPos by remember { mutableStateOf<Offset?>(null) }
+    var debugDotExpiry by remember { mutableStateOf(0L) }
+
+    // --- TAP-TO-PLACE STATE (debug) ---
+    var pendingTap by remember { mutableStateOf<Offset?>(null) }
+
+    // --- FRAME-ENCODE OFFLOAD ---
+    // Coroutine scope + a single-in-flight guard. The heavy YUV->JPEG compression runs
+    // off the render thread, and we never let more than one encode run at a time (so
+    // frames can't pile up on the phone — latest-frame-wins, client side).
+    val scope = rememberCoroutineScope()
+    val encoding = remember { AtomicBoolean(false) }
+
+    val displayMetrics = LocalContext.current.resources.displayMetrics
+    val screenWidth = displayMetrics.widthPixels
+    val screenHeight = displayMetrics.heightPixels
 
     val ip = BuildConfig.SERVER_IP
     val serverUrl = "ws://$ip/ws"
-    val pingUrl = "http://$ip/ping"
+    val pingUrl = "ws://$ip/ping"
 
-    val client = remember {
-        OkHttpClient.Builder()
-            .readTimeout(3.seconds)
-            .build()
-    }
+    val client = remember { OkHttpClient.Builder().readTimeout(3.seconds).build() }
 
-    var webSocket: WebSocket? by remember { mutableStateOf(null) }
-    var lastFrameTime by remember { mutableLongStateOf(0L) }
-    val frameIntervalMs = 500L
+    var webSocket by remember { mutableStateOf<WebSocket?>(null) }
+
+    var lastFrameTime by remember { mutableStateOf(0L) }
+    // Server now turns a frame around in ~20ms, so we can stream much faster than the old
+    // 500ms. The encode offload + in-flight guard keep this from janking the render thread.
+    val frameIntervalMs = 100L
+
+    val engine = rememberEngine()
+    val modelLoader = rememberModelLoader(engine = engine)
+
+    val boxModel = rememberModelInstance(
+        modelLoader = modelLoader,
+        fileLocation = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Box/glTF-Binary/Box.glb"
+    )
+
+    // --- Pulsing animation for the debug indicator ---
+    val pulse = rememberInfiniteTransition(label = "dot")
+    val pulseRadius by pulse.animateFloat(
+        initialValue = 20f,
+        targetValue = 50f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "r"
+    )
+    val pulseAlpha by pulse.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.2f,
+        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
+        label = "a"
+    )
 
     val wsListener = remember {
         object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                serverLogs = "Connected to WebSocket"
+                serverLogs = "Connected to Vision Engine"
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val json = JSONObject(text)
                     if (json.has("timestamp")) {
-                        val sentTime = json.getLong("timestamp")
-                        val rtt = System.currentTimeMillis() - sentTime
+                        val rtt = System.currentTimeMillis() - json.getLong("timestamp")
                         roundtripLatency = "Latency: ${rtt} ms"
                     }
-                    serverLogs = "Received: $text"
+                    if (json.optBoolean("target_found", false)) {
+                        val xNorm = json.getDouble("x_norm")
+                        val yNorm = json.getDouble("y_norm")
+                        targetName = json.getString("item_name")
+                        targetCoord.value = Pair(xNorm, yNorm)
+                    } else {
+                        serverLogs = "Searching for objects..."
+                    }
                 } catch (e: Exception) {
                     serverLogs = "JSON Parse Error"
                 }
             }
 
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                serverLogs = "Closing: $reason"
-            }
-
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 serverLogs = "Error: ${t.localizedMessage}"
                 isStreaming = false
-                roundtripLatency = "Latency: -- ms"
             }
         }
     }
 
     LaunchedEffect(isStreaming) {
         if (isStreaming) {
+            hitAnchor = null
+            targetCoord.value = null
             val request = Request.Builder().url(serverUrl).build()
             webSocket = client.newWebSocket(request, wsListener)
         } else {
             webSocket?.close(1000, "User stopped stream")
             webSocket = null
-            serverLogs = "Stream Stopped"
-            roundtripLatency = "Latency: -- ms"
+            serverLogs = if (targetName.isNotEmpty()) "Found: ${targetName.uppercase()}!" else "Stream Stopped"
         }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
         ARSceneView(
             modifier = Modifier.fillMaxSize(),
+            // CRITICAL: share OUR engine/modelLoader with the scene (fixes invisible box).
+            engine = engine,
+            modelLoader = modelLoader,
             planeRenderer = true,
-            onSessionUpdated = { _, frame ->
+            onSessionUpdated = { session, frame ->
                 val camera = frame.camera
-                trackingStatus = when (camera.trackingState) {
-                    TrackingState.TRACKING -> "Tracking: Good"
-                    TrackingState.PAUSED -> "Tracking Paused: ${camera.trackingFailureReason.name}"
-                    TrackingState.STOPPED -> "Tracking Stopped"
-                    else -> "Unknown"
+                trackingStatus = if (camera.trackingState == TrackingState.TRACKING) "Tracking: Good" else "Tracking: Paused"
+
+                // --- TAP-TO-PLACE (debug) ---
+                val tap = pendingTap
+                if (tap != null && camera.trackingState == TrackingState.TRACKING) {
+                    pendingTap = null
+                    val tapHits = frame.hitTest(tap.x, tap.y)
+                    val planeHit = tapHits.firstOrNull {
+                        it.trackable is Plane && (it.trackable as Plane).isPoseInPolygon(it.hitPose)
+                    }
+                    if (planeHit != null) {
+                        hitAnchor = planeHit.createAnchor()
+                        Log.d("ARTap", "TAP on plane at (${tap.x}, ${tap.y}) | boxModel=${boxModel != null}")
+                    } else {
+                        val pose = camera.pose.compose(Pose.makeTranslation(0f, 0f, -1f))
+                        hitAnchor = session.createAnchor(pose)
+                        Log.d("ARTap", "TAP no plane -> pinned 1m ahead | boxModel=${boxModel != null}")
+                    }
+                    debugDotPos = tap
+                    debugDotExpiry = System.currentTimeMillis() + 2000L
                 }
 
+                // --- PLACEMENT LOGIC (from detection) ---
+                val currentTarget = targetCoord.value
+                if (currentTarget != null && camera.trackingState == TrackingState.TRACKING && hitAnchor == null) {
+                    val inputCoords = floatArrayOf(
+                        currentTarget.first.toFloat(),
+                        currentTarget.second.toFloat()
+                    )
+                    val outputCoords = FloatArray(2)
+                    frame.transformCoordinates2d(
+                        com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED,
+                        inputCoords,
+                        com.google.ar.core.Coordinates2d.VIEW,
+                        outputCoords
+                    )
+
+                    val hitX = outputCoords[0]
+                    val hitY = outputCoords[1]
+
+                    debugDotPos = Offset(hitX, hitY)
+                    debugDotExpiry = System.currentTimeMillis() + 2000L
+
+                    // --- REAL HIT TEST ---
+                    // Raycast through the detection pixel and anchor on the first mapped
+                    // plane it pierces. Works well when the object sits on a surface ARCore
+                    // has mapped (e.g. a keyboard on a desk). If the object is on an unmapped
+                    // surface (a shelf), the ray can sail past to the floor behind — that's
+                    // the signal that we need the Depth API.
+                    val hitResults = frame.hitTest(hitX, hitY)
+                    val firstValidHit = hitResults.firstOrNull { hit ->
+                        hit.trackable is Plane && (hit.trackable as Plane).isPoseInPolygon(hit.hitPose)
+                    }
+                    if (firstValidHit != null) {
+                        hitAnchor = firstValidHit.createAnchor()
+                        Log.d("ARHit", "PLACED on plane at view($hitX, $hitY) | boxModel=${boxModel != null}")
+                        targetCoord.value = null
+                        isStreaming = false
+                    } else {
+                        // No plane under the detection yet. Don't place a wrong box — drop this
+                        // (stale) coordinate and let the next fresh detection try again. Stream
+                        // keeps running so detections keep flowing.
+                        Log.d("ARHit", "Detection at view($hitX, $hitY) but no plane there (hits=${hitResults.size}); waiting for next")
+                        targetCoord.value = null
+                    }
+                }
+
+                // Expire the debug dot.
+                if (debugDotPos != null && System.currentTimeMillis() > debugDotExpiry) {
+                    debugDotPos = null
+                }
+
+                // --- STREAMING LOOP ---
+                // On the render thread we ONLY copy the raw YUV out of the camera image
+                // (cheap memcpy). The expensive downsample + JPEG compression + send runs
+                // on Dispatchers.Default so the AR render thread never stalls. The guard
+                // ensures only one encode is in flight at a time.
                 if (isStreaming && camera.trackingState == TrackingState.TRACKING) {
                     val currentTime = System.currentTimeMillis()
-                    if (currentTime - lastFrameTime > frameIntervalMs) {
+                    if (currentTime - lastFrameTime > frameIntervalMs && encoding.compareAndSet(false, true)) {
                         lastFrameTime = currentTime
-
+                        var launched = false
                         try {
                             frame.acquireCameraImage().use { image ->
-                                // Downsample factor of 4 (1920x1080 -> 480x270)
-                                val smallJpegBytes = ImageUtils.yuv420ToDownsampledJpeg(image, scaleFactor)
-
-                                smallJpegBytes?.let { jpeg ->
-                                    // Allocate space for 8 bytes (Long timestamp) + image bytes
-                                    val buffer = ByteBuffer.allocate(8 + jpeg.size)
-                                    buffer.putLong(currentTime)
-                                    buffer.put(jpeg)
-
-                                    webSocket?.send(buffer.array().toByteString())
+                                if (image.format == ImageFormat.YUV_420_888) {
+                                    val yuv = ImageUtils.extractYuv(image, currentTime)
+                                    launched = true
+                                    scope.launch(Dispatchers.Default) {
+                                        try {
+                                            val jpeg = ImageUtils.yuvToDownsampledJpeg(yuv, scaleFactor)
+                                            jpeg?.let {
+                                                val buffer = ByteBuffer.allocate(8 + it.size)
+                                                buffer.putLong(yuv.timestamp)
+                                                buffer.put(it)
+                                                webSocket?.send(buffer.array().toByteString())
+                                            }
+                                        } catch (e: Exception) {
+                                            Log.e("ARStream", "Encode/send failed", e)
+                                        } finally {
+                                            encoding.set(false)
+                                        }
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
                             Log.e("ARStream", "Frame acquisition failed", e)
+                        } finally {
+                            // If we never launched the encode coroutine, release the guard here.
+                            if (!launched) encoding.set(false)
                         }
                     }
                 }
             }
-        )
-
-        // Latency Overlay Box (Top Right Corner)
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 48.dp, end = 16.dp)
-                .background(Color.Black.copy(alpha = 0.7f), shape = RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 6.dp)
         ) {
-            Text(
-                text = roundtripLatency,
-                color = if (roundtripLatency.contains("--")) Color.White else Color.Cyan,
-                fontSize = 14.sp
+            // --- SCENE LIGHT (optional now that the engine is shared; harmless) ---
+            LightNode(
+                engine = engine,
+                type = LightManager.Type.DIRECTIONAL,
+                apply = {
+                    color(1.0f, 1.0f, 1.0f)
+                    intensity(100_000f)
+                    direction(0.0f, -1.0f, -1.0f)
+                    castShadows(false)
+                }
             )
+
+            // --- DECLARATIVE 3D NODES ---
+            hitAnchor?.let { anchor ->
+                AnchorNode(anchor = anchor) {
+                    boxModel?.let { modelInstance ->
+                        ModelNode(
+                            modelInstance = modelInstance,
+                            scaleToUnits = 0.05f
+                        )
+                    }
+                }
+            }
         }
 
-        // Control Panel UI (Bottom Center)
-        Column(
+        // --- TAP CATCHER (debug) ---
+        Box(
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures { offset -> pendingTap = offset }
+                }
+        )
+
+        // --- DEBUG INDICATOR OVERLAY (2D, pure Compose) ---
+        debugDotPos?.let { pos ->
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = Color.Magenta.copy(alpha = pulseAlpha),
+                    radius = pulseRadius,
+                    center = pos,
+                    style = Stroke(width = 4f)
+                )
+                drawCircle(
+                    color = Color.Magenta,
+                    radius = 8f,
+                    center = pos
+                )
+            }
+        }
+
+        // Latency Overlay
+        Box(
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 48.dp, end = 16.dp)
+                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Text(text = roundtripLatency, color = Color.Cyan, fontSize = 14.sp)
+        }
+
+        // Control Panel
+        Column(
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            Text(text = "Tap anywhere to drop a test box", color = Color.White, fontSize = 12.sp)
             Text(text = trackingStatus, color = Color.Green)
-            Text(text = serverLogs, color = Color.Yellow)
-
+            Text(text = serverLogs, color = if (targetName.isNotEmpty()) Color.Green else Color.Yellow, fontSize = 18.sp)
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(4.dp)
@@ -217,27 +394,30 @@ fun ARScreen() {
                     }
                 }
             }
-
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Button(onClick = {
                     serverLogs = "Pinging..."
-                    val request = Request.Builder().url(pingUrl).build()
-                    client.newCall(request).enqueue(object : Callback {
-                        override fun onFailure(call: Call, e: IOException) {
-                            serverLogs = "Ping Failed: ${e.localizedMessage}"
-                        }
-                        override fun onResponse(call: Call, response: Response) {
-                            serverLogs = "Ping Success: ${response.code}"
-                        }
-                    })
+                    try {
+                        val request = Request.Builder().url(pingUrl).build()
+                        client.newCall(request).enqueue(object : Callback {
+                            override fun onFailure(call: Call, e: IOException) {
+                                serverLogs = "Ping Failed: ${e.localizedMessage}"
+                            }
+
+                            override fun onResponse(call: Call, response: Response) {
+                                serverLogs = "Ping Success: ${response.code}"
+                            }
+                        })
+                    } catch (e: IllegalArgumentException) {
+                        serverLogs = "Invalid URL Format"
+                    }
                 }) {
                     Text("Test Ping")
                 }
-
                 Button(onClick = { isStreaming = !isStreaming }) {
-                    Text(if (isStreaming) "Stop Streaming" else "Start Streaming")
+                    Text(if (isStreaming) "Stop Scanning" else "Start Scanning")
                 }
             }
         }
@@ -245,62 +425,75 @@ fun ARScreen() {
 }
 
 object ImageUtils {
-    fun yuv420ToDownsampledJpeg(image: Image, scaleFactor: Int): ByteArray? {
-        if (image.format != ImageFormat.YUV_420_888) return null
 
-        val planes = image.planes
-        val yBuffer = planes[0].buffer
-        val uBuffer = planes[1].buffer
-        val vBuffer = planes[2].buffer
+    // Raw YUV copied off the camera Image on the render thread, so the heavy
+    // compression can run later on a background thread.
+    class Yuv420Frame(
+        val width: Int,
+        val height: Int,
+        val y: ByteArray,
+        val u: ByteArray,
+        val v: ByteArray,
+        val yRowStride: Int,
+        val yPixelStride: Int,
+        val uRowStride: Int,
+        val uPixelStride: Int,
+        val vRowStride: Int,
+        val vPixelStride: Int,
+        val timestamp: Long
+    )
 
-        // Calculate the new downscaled dimensions
-        val newWidth = image.width / scaleFactor
-        val newHeight = image.height / scaleFactor
+    // Fast: just copies the three plane buffers + strides. Must run while the Image is
+    // still open (i.e. on the render thread, inside acquireCameraImage().use { }).
+    fun extractYuv(image: Image, timestamp: Long): Yuv420Frame {
+        val p = image.planes
+        val yb = p[0].buffer.duplicate()
+        val ub = p[1].buffer.duplicate()
+        val vb = p[2].buffer.duplicate()
+        val y = ByteArray(yb.remaining()); yb.get(y)
+        val u = ByteArray(ub.remaining()); ub.get(u)
+        val v = ByteArray(vb.remaining()); vb.get(v)
+        return Yuv420Frame(
+            image.width, image.height, y, u, v,
+            p[0].rowStride, p[0].pixelStride,
+            p[1].rowStride, p[1].pixelStride,
+            p[2].rowStride, p[2].pixelStride,
+            timestamp
+        )
+    }
 
-        // Allocate a much smaller byte array exactly the size of our target resolution
+    // Slow part (downsample + NV21 pack + JPEG). Safe to call off the render thread.
+    fun yuvToDownsampledJpeg(f: Yuv420Frame, scaleFactor: Int): ByteArray? {
+        val newWidth = f.width / scaleFactor
+        val newHeight = f.height / scaleFactor
         val ySize = newWidth * newHeight
         val nv21 = ByteArray(ySize + (ySize / 2))
 
-        val yRowStride = planes[0].rowStride
-        val yPixelStride = planes[0].pixelStride
-
         var outIdx = 0
 
-        // 1. Extract Y-Plane (Luminance/Grayscale) by skipping pixels
+        // 1. Y-plane (luminance) via pixel skipping
         for (row in 0 until newHeight) {
             val srcRow = row * scaleFactor
             for (col in 0 until newWidth) {
                 val srcCol = col * scaleFactor
-                val pos = (srcRow * yRowStride) + (srcCol * yPixelStride)
-                nv21[outIdx++] = yBuffer.get(pos)
+                nv21[outIdx++] = f.y[srcRow * f.yRowStride + srcCol * f.yPixelStride]
             }
         }
 
-        val uRowStride = planes[1].rowStride
-        val uPixelStride = planes[1].pixelStride
-        val vRowStride = planes[2].rowStride
-        val vPixelStride = planes[2].pixelStride
-
-        // 2. Extract U and V planes (Color) - these are already half-resolution in YUV_420
+        // 2. U/V planes (already half-res in YUV_420). NV21 expects V then U.
         for (row in 0 until newHeight / 2) {
             val srcRow = row * scaleFactor
             for (col in 0 until newWidth / 2) {
                 val srcCol = col * scaleFactor
-
-                val uPos = (srcRow * uRowStride) + (srcCol * uPixelStride)
-                val vPos = (srcRow * vRowStride) + (srcCol * vPixelStride)
-
-                // NV21 format expects V then U interleaved
-                nv21[outIdx++] = vBuffer.get(vPos)
-                nv21[outIdx++] = uBuffer.get(uPos)
+                nv21[outIdx++] = f.v[srcRow * f.vRowStride + srcCol * f.vPixelStride]
+                nv21[outIdx++] = f.u[srcRow * f.uRowStride + srcCol * f.uPixelStride]
             }
         }
 
-        // 3. Perform a SINGLE JPEG compression on the already-shrunken byte array
+        // 3. Single JPEG compression on the shrunken buffer
         val out = ByteArrayOutputStream()
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, newWidth, newHeight, null)
         yuvImage.compressToJpeg(Rect(0, 0, newWidth, newHeight), 80, out)
-
         return out.toByteArray()
     }
 }
