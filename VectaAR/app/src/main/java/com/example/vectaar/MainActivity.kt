@@ -50,6 +50,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.seconds
 import io.github.sceneview.rememberEngine
 import io.github.sceneview.rememberModelLoader
@@ -94,11 +95,18 @@ fun ARScreen() {
     var pendingTap by remember { mutableStateOf<Offset?>(null) }
 
     // --- FRAME-ENCODE OFFLOAD ---
-    // Coroutine scope + a single-in-flight guard. The heavy YUV->JPEG compression runs
-    // off the render thread, and we never let more than one encode run at a time (so
-    // frames can't pile up on the phone — latest-frame-wins, client side).
     val scope = rememberCoroutineScope()
     val encoding = remember { AtomicBoolean(false) }
+
+    // --- DATA USAGE TRACKING ---
+    // Atomic counters are bumped from the send coroutine / the OkHttp receive thread.
+    // The render loop reads them ~2x/sec and computes a throughput rate (main thread).
+    val totalSentBytes = remember { AtomicLong(0L) }
+    val totalRecvBytes = remember { AtomicLong(0L) }
+    var dataStats by remember { mutableStateOf("Sent 0.0MB  Recv 0.0MB  0 KB/s") }
+    var lastStatsTime by remember { mutableStateOf(0L) }
+    var lastSentSnapshot by remember { mutableStateOf(0L) }
+    var lastRecvSnapshot by remember { mutableStateOf(0L) }
 
     val displayMetrics = LocalContext.current.resources.displayMetrics
     val screenWidth = displayMetrics.widthPixels
@@ -113,9 +121,14 @@ fun ARScreen() {
     var webSocket by remember { mutableStateOf<WebSocket?>(null) }
 
     var lastFrameTime by remember { mutableStateOf(0L) }
-    // Server now turns a frame around in ~20ms, so we can stream much faster than the old
-    // 500ms. The encode offload + in-flight guard keep this from janking the render thread.
-    val frameIntervalMs = 100L
+
+    // Send interval scales with 1/scaleFactor^2 so (frames x image area) — i.e. the data
+    // rate — stays roughly CONSTANT across quality settings, instead of full-res frames
+    // backpressuring the pipeline. Anchored so 1/4 (scaleFactor=4) -> 100ms.
+    //   scaleFactor 1 (full)  -> 1600ms
+    //   scaleFactor 2 (1/2)   -> 400ms
+    //   scaleFactor 4 (1/4)   -> 100ms
+    val baseIntervalMs = 1600L
 
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine = engine)
@@ -147,6 +160,8 @@ fun ARScreen() {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                // Count received bytes (chars ~= bytes for ASCII JSON; good enough).
+                totalRecvBytes.addAndGet(text.length.toLong())
                 try {
                     val json = JSONObject(text)
                     if (json.has("timestamp")) {
@@ -197,6 +212,24 @@ fun ARScreen() {
                 val camera = frame.camera
                 trackingStatus = if (camera.trackingState == TrackingState.TRACKING) "Tracking: Good" else "Tracking: Paused"
 
+                // --- DATA USAGE STATS (recompute ~2x/sec from atomic counters) ---
+                run {
+                    val nowMs = System.currentTimeMillis()
+                    if (lastStatsTime == 0L) lastStatsTime = nowMs
+                    if (nowMs - lastStatsTime >= 500) {
+                        val sent = totalSentBytes.get()
+                        val recv = totalRecvBytes.get()
+                        val dtSec = (nowMs - lastStatsTime) / 1000.0
+                        val rateKbps = ((sent - lastSentSnapshot) + (recv - lastRecvSnapshot)) / 1024.0 / dtSec
+                        dataStats = "Sent %.1fMB  Recv %.1fMB  %.0f KB/s".format(
+                            sent / 1048576.0, recv / 1048576.0, rateKbps
+                        )
+                        lastStatsTime = nowMs
+                        lastSentSnapshot = sent
+                        lastRecvSnapshot = recv
+                    }
+                }
+
                 // --- TAP-TO-PLACE (debug) ---
                 val tap = pendingTap
                 if (tap != null && camera.trackingState == TrackingState.TRACKING) {
@@ -207,11 +240,9 @@ fun ARScreen() {
                     }
                     if (planeHit != null) {
                         hitAnchor = planeHit.createAnchor()
-                        Log.d("ARTap", "TAP on plane at (${tap.x}, ${tap.y}) | boxModel=${boxModel != null}")
                     } else {
                         val pose = camera.pose.compose(Pose.makeTranslation(0f, 0f, -1f))
                         hitAnchor = session.createAnchor(pose)
-                        Log.d("ARTap", "TAP no plane -> pinned 1m ahead | boxModel=${boxModel != null}")
                     }
                     debugDotPos = tap
                     debugDotExpiry = System.currentTimeMillis() + 2000L
@@ -239,11 +270,6 @@ fun ARScreen() {
                     debugDotExpiry = System.currentTimeMillis() + 2000L
 
                     // --- REAL HIT TEST ---
-                    // Raycast through the detection pixel and anchor on the first mapped
-                    // plane it pierces. Works well when the object sits on a surface ARCore
-                    // has mapped (e.g. a keyboard on a desk). If the object is on an unmapped
-                    // surface (a shelf), the ray can sail past to the floor behind — that's
-                    // the signal that we need the Depth API.
                     val hitResults = frame.hitTest(hitX, hitY)
                     val firstValidHit = hitResults.firstOrNull { hit ->
                         hit.trackable is Plane && (hit.trackable as Plane).isPoseInPolygon(hit.hitPose)
@@ -254,9 +280,6 @@ fun ARScreen() {
                         targetCoord.value = null
                         isStreaming = false
                     } else {
-                        // No plane under the detection yet. Don't place a wrong box — drop this
-                        // (stale) coordinate and let the next fresh detection try again. Stream
-                        // keeps running so detections keep flowing.
                         Log.d("ARHit", "Detection at view($hitX, $hitY) but no plane there (hits=${hitResults.size}); waiting for next")
                         targetCoord.value = null
                     }
@@ -267,13 +290,10 @@ fun ARScreen() {
                     debugDotPos = null
                 }
 
-                // --- STREAMING LOOP ---
-                // On the render thread we ONLY copy the raw YUV out of the camera image
-                // (cheap memcpy). The expensive downsample + JPEG compression + send runs
-                // on Dispatchers.Default so the AR render thread never stalls. The guard
-                // ensures only one encode is in flight at a time.
+                // --- STREAMING LOOP (encode offloaded; data-rate-constant interval) ---
                 if (isStreaming && camera.trackingState == TrackingState.TRACKING) {
                     val currentTime = System.currentTimeMillis()
+                    val frameIntervalMs = baseIntervalMs / (scaleFactor.toLong() * scaleFactor.toLong())
                     if (currentTime - lastFrameTime > frameIntervalMs && encoding.compareAndSet(false, true)) {
                         lastFrameTime = currentTime
                         var launched = false
@@ -290,6 +310,7 @@ fun ARScreen() {
                                                 buffer.putLong(yuv.timestamp)
                                                 buffer.put(it)
                                                 webSocket?.send(buffer.array().toByteString())
+                                                totalSentBytes.addAndGet((8 + it.size).toLong())
                                             }
                                         } catch (e: Exception) {
                                             Log.e("ARStream", "Encode/send failed", e)
@@ -302,14 +323,13 @@ fun ARScreen() {
                         } catch (e: Exception) {
                             Log.e("ARStream", "Frame acquisition failed", e)
                         } finally {
-                            // If we never launched the encode coroutine, release the guard here.
                             if (!launched) encoding.set(false)
                         }
                     }
                 }
             }
         ) {
-            // --- SCENE LIGHT (optional now that the engine is shared; harmless) ---
+            // --- SCENE LIGHT ---
             LightNode(
                 engine = engine,
                 type = LightManager.Type.DIRECTIONAL,
@@ -327,7 +347,7 @@ fun ARScreen() {
                     boxModel?.let { modelInstance ->
                         ModelNode(
                             modelInstance = modelInstance,
-                            scaleToUnits = 0.05f
+                            scaleToUnits = 0.1f
                         )
                     }
                 }
@@ -360,12 +380,15 @@ fun ARScreen() {
             }
         }
 
-        // Latency Overlay
-        Box(
+        // Latency + Data Usage Overlay
+        Column(
             modifier = Modifier.align(Alignment.TopEnd).padding(top = 48.dp, end = 16.dp)
-                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp)).padding(horizontal = 12.dp, vertical = 6.dp)
+                .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalAlignment = Alignment.End
         ) {
             Text(text = roundtripLatency, color = Color.Cyan, fontSize = 14.sp)
+            Text(text = dataStats, color = Color.Cyan, fontSize = 11.sp)
         }
 
         // Control Panel
@@ -381,7 +404,15 @@ fun ARScreen() {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(4.dp)
             ) {
+                // Labels show the QUALITY fraction (1 = full, 1/2, 1/4) so it's intuitive
+                // that higher settings reduce frame quality.
                 listOf(1, 2, 4).forEach { factor ->
+                    val label = when (factor) {
+                        1 -> "1"
+                        2 -> "1/2"
+                        4 -> "1/4"
+                        else -> "1/$factor"
+                    }
                     Button(
                         onClick = { scaleFactor = factor },
                         colors = ButtonDefaults.buttonColors(
@@ -390,7 +421,7 @@ fun ARScreen() {
                         ),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                     ) {
-                        Text(text = "${factor}X")
+                        Text(text = label)
                     }
                 }
             }
@@ -426,8 +457,6 @@ fun ARScreen() {
 
 object ImageUtils {
 
-    // Raw YUV copied off the camera Image on the render thread, so the heavy
-    // compression can run later on a background thread.
     class Yuv420Frame(
         val width: Int,
         val height: Int,
@@ -443,8 +472,6 @@ object ImageUtils {
         val timestamp: Long
     )
 
-    // Fast: just copies the three plane buffers + strides. Must run while the Image is
-    // still open (i.e. on the render thread, inside acquireCameraImage().use { }).
     fun extractYuv(image: Image, timestamp: Long): Yuv420Frame {
         val p = image.planes
         val yb = p[0].buffer.duplicate()
@@ -462,7 +489,6 @@ object ImageUtils {
         )
     }
 
-    // Slow part (downsample + NV21 pack + JPEG). Safe to call off the render thread.
     fun yuvToDownsampledJpeg(f: Yuv420Frame, scaleFactor: Int): ByteArray? {
         val newWidth = f.width / scaleFactor
         val newHeight = f.height / scaleFactor
@@ -471,7 +497,6 @@ object ImageUtils {
 
         var outIdx = 0
 
-        // 1. Y-plane (luminance) via pixel skipping
         for (row in 0 until newHeight) {
             val srcRow = row * scaleFactor
             for (col in 0 until newWidth) {
@@ -480,7 +505,6 @@ object ImageUtils {
             }
         }
 
-        // 2. U/V planes (already half-res in YUV_420). NV21 expects V then U.
         for (row in 0 until newHeight / 2) {
             val srcRow = row * scaleFactor
             for (col in 0 until newWidth / 2) {
@@ -490,7 +514,6 @@ object ImageUtils {
             }
         }
 
-        // 3. Single JPEG compression on the shrunken buffer
         val out = ByteArrayOutputStream()
         val yuvImage = YuvImage(nv21, ImageFormat.NV21, newWidth, newHeight, null)
         yuvImage.compressToJpeg(Rect(0, 0, newWidth, newHeight), 80, out)
