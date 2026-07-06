@@ -80,7 +80,7 @@ fun ARScreen() {
     var isStreaming by remember { mutableStateOf(false) }
     var serverLogs by remember { mutableStateOf("Disconnected") }
     var roundtripLatency by remember { mutableStateOf("Latency: -- ms") }
-    var scaleFactor by remember { mutableIntStateOf(1) }
+    var scaleFactor by remember { mutableIntStateOf(4) }
 
     val targetCoord = remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var targetName by remember { mutableStateOf("") }
@@ -97,6 +97,12 @@ fun ARScreen() {
     // --- FRAME-ENCODE OFFLOAD ---
     val scope = rememberCoroutineScope()
     val encoding = remember { AtomicBoolean(false) }
+
+    // --- Hand state detection ---
+    var handState by remember { mutableStateOf("no_hand") }
+    var handPredicted by remember { mutableStateOf(false) }
+    val handNorm = remember { mutableStateOf<FloatArray?>(null) }   // normalized, from server
+    var handViewPts by remember { mutableStateOf<FloatArray?>(null) } // VIEW pixels, for drawing
 
     // --- DATA USAGE TRACKING ---
     // Atomic counters are bumped from the send coroutine / the OkHttp receive thread.
@@ -158,7 +164,6 @@ fun ARScreen() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 serverLogs = "Connected to Vision Engine"
             }
-
             override fun onMessage(webSocket: WebSocket, text: String) {
                 // Count received bytes (chars ~= bytes for ASCII JSON; good enough).
                 totalRecvBytes.addAndGet(text.length.toLong())
@@ -168,12 +173,26 @@ fun ARScreen() {
                         val rtt = System.currentTimeMillis() - json.getLong("timestamp")
                         roundtripLatency = "Latency: ${rtt} ms"
                     }
+
+                    // --- HAND STATE (from the hand-state server) ---
+                    if (json.has("state") || json.has("landmarks")) {
+                        val hf = parseHandFrame(json)
+                        handState = hf.state
+                        handPredicted = hf.predicted
+                        handNorm.value = hf.normLandmarks
+                        serverLogs = "State: ${hf.state}"
+                    }
+
+                    // --- TARGET (YOLO/detection server, or agent's target decision) ---
+                    // Kept: the agent emits either targets or states, so both must coexist.
                     if (json.optBoolean("target_found", false)) {
                         val xNorm = json.getDouble("x_norm")
                         val yNorm = json.getDouble("y_norm")
                         targetName = json.getString("item_name")
                         targetCoord.value = Pair(xNorm, yNorm)
-                    } else {
+                    } else if (!json.has("state") && !json.has("landmarks")) {
+                        // only show "searching" for a detection message with no target —
+                        // don't clobber the state label on hand-state messages
                         serverLogs = "Searching for objects..."
                     }
                 } catch (e: Exception) {
@@ -290,6 +309,17 @@ fun ARScreen() {
                     debugDotPos = null
                 }
 
+                // --- HAND OVERLAY: map normalized image landmarks -> VIEW pixels ---
+                val norm = handNorm.value
+                handViewPts = if (norm != null && norm.size >= 42 &&
+                    camera.trackingState == TrackingState.TRACKING) {
+                    FloatArray(norm.size).also { out ->
+                        frame.transformCoordinates2d(
+                            com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED, norm,
+                            com.google.ar.core.Coordinates2d.VIEW, out)
+                    }
+                } else null
+
                 // --- STREAMING LOOP (encode offloaded; data-rate-constant interval) ---
                 if (isStreaming && camera.trackingState == TrackingState.TRACKING) {
                     val currentTime = System.currentTimeMillis()
@@ -378,6 +408,17 @@ fun ARScreen() {
                     center = pos
                 )
             }
+        }
+
+        HandSkeletonOverlay(viewPts = handViewPts, detected = !handPredicted,
+            modifier = Modifier.fillMaxSize())
+
+        Box(Modifier.fillMaxSize().padding(top = 100.dp), contentAlignment = Alignment.TopCenter) {
+            Text(handState.uppercase() + if (handPredicted) "  ·KF" else "",
+                color = stateColor(handState), fontSize = 22.sp,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 14.dp, vertical = 6.dp))
         }
 
         // Latency + Data Usage Overlay

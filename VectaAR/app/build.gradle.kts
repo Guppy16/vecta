@@ -48,6 +48,7 @@ android {
         compose = true
         buildConfig = true
     }
+    packaging { jniLibs { useLegacyPackaging = false } }
 }
 
 dependencies {
@@ -74,4 +75,7 @@ dependencies {
 
     // Websockets
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
+
+    // media pipe for hand detection
+    implementation("com.google.mediapipe:tasks-vision:latest.release")
 }
