@@ -4,6 +4,7 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
 import android.media.Image
+import androidx.camera.core.ImageProxy
 import java.io.ByteArrayOutputStream
 
 /**
@@ -28,6 +29,24 @@ object ImageUtils {
     )
 
     fun extractYuv(image: Image, timestamp: Long): Yuv420Frame {
+        val p = image.planes
+        val yb = p[0].buffer.duplicate()
+        val ub = p[1].buffer.duplicate()
+        val vb = p[2].buffer.duplicate()
+        val y = ByteArray(yb.remaining()); yb.get(y)
+        val u = ByteArray(ub.remaining()); ub.get(u)
+        val v = ByteArray(vb.remaining()); vb.get(v)
+        return Yuv420Frame(
+            image.width, image.height, y, u, v,
+            p[0].rowStride, p[0].pixelStride,
+            p[1].rowStride, p[1].pixelStride,
+            p[2].rowStride, p[2].pixelStride,
+            timestamp
+        )
+    }
+
+    /** CameraX overload — same plane layout, different proxy type. */
+    fun extractYuv(image: ImageProxy, timestamp: Long): Yuv420Frame {
         val p = image.planes
         val yb = p[0].buffer.duplicate()
         val ub = p[1].buffer.duplicate()

@@ -11,13 +11,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -29,7 +35,8 @@ data class ChatMessage(val role: String, val text: String, val meta: String = ""
 
 data class LlmMsg(
     val status: String, val say: String, val latencyMs: Int,
-    val promptTokens: Int?, val completionTokens: Int?, val tokPerS: Double?
+    val promptTokens: Int?, val completionTokens: Int?, val tokPerS: Double?,
+    val ctxTokens: Int?, val ctxMax: Int?
 )
 
 fun parseLlm(json: JSONObject) = LlmMsg(
@@ -38,19 +45,34 @@ fun parseLlm(json: JSONObject) = LlmMsg(
     latencyMs = json.optInt("latency_ms", 0),
     promptTokens = if (json.isNull("prompt_tokens")) null else json.optInt("prompt_tokens"),
     completionTokens = if (json.isNull("completion_tokens")) null else json.optInt("completion_tokens"),
-    tokPerS = if (json.isNull("tok_per_s")) null else json.optDouble("tok_per_s")
+    tokPerS = if (json.isNull("tok_per_s")) null else json.optDouble("tok_per_s"),
+    ctxTokens = if (json.isNull("ctx_tokens")) null else json.optInt("ctx_tokens"),
+    ctxMax = if (json.isNull("ctx_max")) null else json.optInt("ctx_max")
 )
+
+/** "Ctx 3.2k/32k · 10%" — blank if we don't have the numbers. */
+fun ctxLine(used: Int?, max: Int?): String {
+    if (used == null || max == null || max <= 0) return ""
+    fun k(n: Int) = if (n >= 1000) "%.1fk".format(n / 1000.0) else n.toString()
+    return "Ctx ${k(used)}/${k(max)} · ${100 * used / max}%"
+}
 
 fun statusColor(status: String): Color = when (status) {
     "found" -> Color(0xFF46C46A)
     "info"  -> Color(0xFFE0A83C)
+    "answer" -> Color(0xFF5AA9E6)
     else    -> Color(0xFF8A8F98)
 }
 
-/** Task entry: type the standing task, tap Set to send it to the server. */
+private fun dismiss(kb: SoftwareKeyboardController?, fm: FocusManager) { kb?.hide(); fm.clearFocus() }
+
+/** Task entry: type the standing task, Set to send it. Keyboard dismisses on submit. */
 @Composable
 fun TaskInputBar(currentTask: String, onSet: (String) -> Unit, modifier: Modifier = Modifier) {
     var text by remember { mutableStateOf(currentTask) }
+    val kb = LocalSoftwareKeyboardController.current
+    val fm = LocalFocusManager.current
+    fun submit() { if (text.isNotBlank()) { onSet(text.trim()); dismiss(kb, fm) } }
     Row(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
@@ -62,15 +84,15 @@ fun TaskInputBar(currentTask: String, onSet: (String) -> Unit, modifier: Modifie
             value = text, onValueChange = { text = it },
             placeholder = { Text("e.g. find a globe", fontSize = 13.sp) },
             singleLine = true, modifier = Modifier.weight(1f),
-            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { if (text.isNotBlank()) onSet(text.trim()) }),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { submit() }),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedTextColor = Color.White, unfocusedTextColor = Color.White,
                 focusedBorderColor = Color.Cyan, unfocusedBorderColor = Color.Gray,
                 focusedPlaceholderColor = Color.Gray, unfocusedPlaceholderColor = Color.Gray
             )
         )
-        Button(onClick = { if (text.isNotBlank()) onSet(text.trim()) }) { Text("Set") }
+        Button(onClick = { submit() }) { Text("Set") }
     }
 }
 
@@ -90,11 +112,8 @@ fun SnapRecordButton(
                 detectTapGestures(
                     onPress = {
                         val quick = withTimeoutOrNull(300L) { tryAwaitRelease() }
-                        if (quick == null) {            // held -> record until release
-                            onRecordStart(); tryAwaitRelease(); onRecordStop()
-                        } else if (quick) {             // quick tap -> snap
-                            onSnap()
-                        }
+                        if (quick == null) { onRecordStart(); tryAwaitRelease(); onRecordStop() }
+                        else if (quick) { onSnap() }
                     }
                 )
             },
@@ -136,17 +155,23 @@ fun TransientMessage(latest: ChatMessage?, onExpand: () -> Unit, modifier: Modif
     }
 }
 
-// tiny helper so an empty meta still gets a sensible dot colour
 private fun String.ifBlankOr(default: String) = if (this.isBlank()) default else this
 
-/** Full conversation, shown when the chat button is toggled on. */
+/** Full conversation + a box to ask the model about what it's seen this session. */
 @Composable
-fun ChatSheet(messages: List<ChatMessage>, onClose: () -> Unit, modifier: Modifier = Modifier) {
+fun ChatSheet(
+    messages: List<ChatMessage>, onClose: () -> Unit,
+    onAsk: (String) -> Unit, modifier: Modifier = Modifier
+) {
+    var q by remember { mutableStateOf("") }
+    val kb = LocalSoftwareKeyboardController.current
+    val fm = LocalFocusManager.current
+    fun submit() { if (q.isNotBlank()) { onAsk(q.trim()); q = ""; dismiss(kb, fm) } }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .fillMaxHeight(0.55f)
-            .background(Color.Black.copy(alpha = 0.9f), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
+            .fillMaxHeight(0.6f)
+            .background(Color.Black.copy(alpha = 0.92f), RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp))
             .padding(12.dp)
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
@@ -165,10 +190,7 @@ fun ChatSheet(messages: List<ChatMessage>, onClose: () -> Unit, modifier: Modifi
                         color = if (mine) Color.Black else Color.White,
                         fontSize = 15.sp,
                         modifier = Modifier
-                            .background(
-                                if (mine) Color.Cyan else Color.DarkGray,
-                                RoundedCornerShape(10.dp)
-                            )
+                            .background(if (mine) Color.Cyan else Color.DarkGray, RoundedCornerShape(10.dp))
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     )
                     if (m.meta.isNotBlank())
@@ -176,6 +198,22 @@ fun ChatSheet(messages: List<ChatMessage>, onClose: () -> Unit, modifier: Modifi
                             modifier = Modifier.padding(top = 2.dp, start = 4.dp, end = 4.dp))
                 }
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedTextField(
+                value = q, onValueChange = { q = it },
+                placeholder = { Text("Ask about what you've seen…", fontSize = 13.sp) },
+                singleLine = true, modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { submit() }),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                    focusedBorderColor = Color.Cyan, unfocusedBorderColor = Color.Gray,
+                    focusedPlaceholderColor = Color.Gray, unfocusedPlaceholderColor = Color.Gray
+                )
+            )
+            Button(onClick = { submit() }) { Text("Ask") }
         }
     }
 }
