@@ -2,12 +2,7 @@ package com.example.vectaar
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
-import android.graphics.Rect
-import android.graphics.YuvImage
-import android.media.Image
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -41,20 +36,19 @@ import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.node.LightNode
 import io.github.sceneview.node.ModelNode
+import io.github.sceneview.rememberEngine
+import io.github.sceneview.rememberModelInstance
+import io.github.sceneview.rememberModelLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import okhttp3.*
 import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.seconds
-import io.github.sceneview.rememberEngine
-import io.github.sceneview.rememberModelLoader
-import io.github.sceneview.rememberModelInstance
 
 class MainActivity : ComponentActivity() {
     private val requestPermissionLauncher = registerForActivityResult(
@@ -69,44 +63,34 @@ class MainActivity : ComponentActivity() {
         if (!hasCameraPermission) requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         setContent {
             if (hasCameraPermission) ARScreen()
-            else Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Camera permission required.") }
+            else Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Camera permission required.")
+            }
         }
     }
 }
 
 @Composable
 fun ARScreen() {
+    // ----------------------------------------------------------------- //
+    //  MAIN PATH: task -> snap/record frames -> vision LLM -> chat        //
+    // ----------------------------------------------------------------- //
+    var task by remember { mutableStateOf("") }
+    var connected by remember { mutableStateOf(false) }          // socket/session open
+    var recording by remember { mutableStateOf(false) }          // hold-to-record active
+    var snapRequested by remember { mutableStateOf(false) }      // one-shot capture pending
+    var recordLastFrame by remember { mutableStateOf(0L) }
+    var chatMessages by remember { mutableStateOf(listOf<ChatMessage>()) }
+    var latestMsg by remember { mutableStateOf<ChatMessage?>(null) }
+    var showChat by remember { mutableStateOf(false) }
+    var llmStats by remember { mutableStateOf("") }
+    var pingMs by remember { mutableStateOf("Ping: -- ms") }
+    var roundtripLatency by remember { mutableStateOf("RTT: -- ms") }
+    var status by remember { mutableStateOf("Set a task to begin") }
     var trackingStatus by remember { mutableStateOf("Initializing AR...") }
-    var isStreaming by remember { mutableStateOf(false) }
-    var serverLogs by remember { mutableStateOf("Disconnected") }
-    var roundtripLatency by remember { mutableStateOf("Latency: -- ms") }
-    var scaleFactor by remember { mutableIntStateOf(4) }
+    var scaleFactor by remember { mutableIntStateOf(4) }          // default 1/4x
 
-    val targetCoord = remember { mutableStateOf<Pair<Double, Double>?>(null) }
-    var targetName by remember { mutableStateOf("") }
-
-    var hitAnchor by remember { mutableStateOf<com.google.ar.core.Anchor?>(null) }
-
-    // --- DEBUG INDICATOR STATE ---
-    var debugDotPos by remember { mutableStateOf<Offset?>(null) }
-    var debugDotExpiry by remember { mutableStateOf(0L) }
-
-    // --- TAP-TO-PLACE STATE (debug) ---
-    var pendingTap by remember { mutableStateOf<Offset?>(null) }
-
-    // --- FRAME-ENCODE OFFLOAD ---
-    val scope = rememberCoroutineScope()
-    val encoding = remember { AtomicBoolean(false) }
-
-    // --- Hand state detection ---
-    var handState by remember { mutableStateOf("no_hand") }
-    var handPredicted by remember { mutableStateOf(false) }
-    val handNorm = remember { mutableStateOf<FloatArray?>(null) }   // normalized, from server
-    var handViewPts by remember { mutableStateOf<FloatArray?>(null) } // VIEW pixels, for drawing
-
-    // --- DATA USAGE TRACKING ---
-    // Atomic counters are bumped from the send coroutine / the OkHttp receive thread.
-    // The render loop reads them ~2x/sec and computes a throughput rate (main thread).
+    // --- data usage counters (bumped off-thread, read ~2x/sec on render) ---
     val totalSentBytes = remember { AtomicLong(0L) }
     val totalRecvBytes = remember { AtomicLong(0L) }
     var dataStats by remember { mutableStateOf("Sent 0.0MB  Recv 0.0MB  0 KB/s") }
@@ -114,450 +98,307 @@ fun ARScreen() {
     var lastSentSnapshot by remember { mutableStateOf(0L) }
     var lastRecvSnapshot by remember { mutableStateOf(0L) }
 
-    val displayMetrics = LocalContext.current.resources.displayMetrics
-    val screenWidth = displayMetrics.widthPixels
-    val screenHeight = displayMetrics.heightPixels
+    // --- frame-encode offload guard (one in flight) ---
+    val scope = rememberCoroutineScope()
+    val encoding = remember { AtomicBoolean(false) }
+
+    // ----------------------------------------------------------------- //
+    //  DORMANT: kept but not on the main path                            //
+    //   - AR placement from a detection message (old YOLO-World path)    //
+    //   - hand tracking lives in HandOverlay.kt and is not wired here    //
+    // ----------------------------------------------------------------- //
+    val targetCoord = remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var targetName by remember { mutableStateOf("") }
+    var hitAnchor by remember { mutableStateOf<com.google.ar.core.Anchor?>(null) }
+    var debugDotPos by remember { mutableStateOf<Offset?>(null) }
+    var debugDotExpiry by remember { mutableStateOf(0L) }
+    var pendingTap by remember { mutableStateOf<Offset?>(null) }
 
     val ip = BuildConfig.SERVER_IP
     val serverUrl = "ws://$ip/ws"
-    val pingUrl = "ws://$ip/ping"
-
+    val pingUrl = "http://$ip/ping"     // GET endpoint (was ws:// — that was a bug)
     val client = remember { OkHttpClient.Builder().readTimeout(3.seconds).build() }
-
     var webSocket by remember { mutableStateOf<WebSocket?>(null) }
 
-    var lastFrameTime by remember { mutableStateOf(0L) }
-
-    // Send interval scales with 1/scaleFactor^2 so (frames x image area) — i.e. the data
-    // rate — stays roughly CONSTANT across quality settings, instead of full-res frames
-    // backpressuring the pipeline. Anchored so 1/4 (scaleFactor=4) -> 100ms.
-    //   scaleFactor 1 (full)  -> 1600ms
-    //   scaleFactor 2 (1/2)   -> 400ms
-    //   scaleFactor 4 (1/4)   -> 100ms
-    val baseIntervalMs = 1600L
+    // Send interval scales as 1/scaleFactor^2 so (frames x area) — the data rate —
+    // stays constant across quality settings. Anchored so 1/4x -> 400ms.
+    //   1x -> 6400ms ; 1/2x -> 1600ms ; 1/4x -> 400ms
+    val baseIntervalMs = 6400L
 
     val engine = rememberEngine()
     val modelLoader = rememberModelLoader(engine = engine)
-
     val boxModel = rememberModelInstance(
         modelLoader = modelLoader,
         fileLocation = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Box/glTF-Binary/Box.glb"
     )
 
-    // --- Pulsing animation for the debug indicator ---
+    // pulsing debug indicator
     val pulse = rememberInfiniteTransition(label = "dot")
-    val pulseRadius by pulse.animateFloat(
-        initialValue = 20f,
-        targetValue = 50f,
-        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
-        label = "r"
-    )
-    val pulseAlpha by pulse.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.2f,
-        animationSpec = infiniteRepeatable(tween(600), RepeatMode.Reverse),
-        label = "a"
-    )
+    val pulseRadius by pulse.animateFloat(20f, 50f,
+        infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "r")
+    val pulseAlpha by pulse.animateFloat(1f, 0.2f,
+        infiniteRepeatable(tween(600), RepeatMode.Reverse), label = "a")
 
     val wsListener = remember {
         object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                serverLogs = "Connected to Vision Engine"
-            }
+            override fun onOpen(webSocket: WebSocket, response: Response) { status = "Connected" }
+
             override fun onMessage(webSocket: WebSocket, text: String) {
-                // Count received bytes (chars ~= bytes for ASCII JSON; good enough).
                 totalRecvBytes.addAndGet(text.length.toLong())
                 try {
                     val json = JSONObject(text)
-                    if (json.has("timestamp")) {
-                        val rtt = System.currentTimeMillis() - json.getLong("timestamp")
-                        roundtripLatency = "Latency: ${rtt} ms"
+
+                    // --- MAIN: vision-LLM result ---
+                    if (json.optString("type") == "llm") {
+                        val m = parseLlm(json)
+                        llmStats = "LLM ${m.latencyMs}ms" + (m.tokPerS?.let { "  $it tok/s" } ?: "")
+                        if (json.has("ts"))
+                            roundtripLatency = "RTT: ${System.currentTimeMillis() - json.getLong("ts")} ms"
+                        if (m.say.isNotBlank()) {
+                            val cm = ChatMessage("assistant", m.say, m.status)
+                            chatMessages = chatMessages + cm
+                            latestMsg = cm
+                        }
+                        return
                     }
 
-                    // --- HAND STATE (from the hand-state server) ---
-                    if (json.has("state") || json.has("landmarks")) {
-                        val hf = parseHandFrame(json)
-                        handState = hf.state
-                        handPredicted = hf.predicted
-                        handNorm.value = hf.normLandmarks
-                        serverLogs = "State: ${hf.state}"
-                    }
-
-                    // --- TARGET (YOLO/detection server, or agent's target decision) ---
-                    // Kept: the agent emits either targets or states, so both must coexist.
+                    // --- DORMANT: AR placement from a detection message ---
                     if (json.optBoolean("target_found", false)) {
-                        val xNorm = json.getDouble("x_norm")
-                        val yNorm = json.getDouble("y_norm")
                         targetName = json.getString("item_name")
-                        targetCoord.value = Pair(xNorm, yNorm)
-                    } else if (!json.has("state") && !json.has("landmarks")) {
-                        // only show "searching" for a detection message with no target —
-                        // don't clobber the state label on hand-state messages
-                        serverLogs = "Searching for objects..."
+                        targetCoord.value = Pair(json.getDouble("x_norm"), json.getDouble("y_norm"))
                     }
-                } catch (e: Exception) {
-                    serverLogs = "JSON Parse Error"
-                }
+                } catch (e: Exception) { status = "JSON parse error" }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                serverLogs = "Error: ${t.localizedMessage}"
-                isStreaming = false
+                status = "Error: ${t.localizedMessage}"; connected = false
             }
         }
     }
 
-    LaunchedEffect(isStreaming) {
-        if (isStreaming) {
-            hitAnchor = null
-            targetCoord.value = null
-            val request = Request.Builder().url(serverUrl).build()
-            webSocket = client.newWebSocket(request, wsListener)
+    // Open the socket while a session is active; (re)send the task on open/change.
+    LaunchedEffect(connected) {
+        if (connected) {
+            webSocket = client.newWebSocket(Request.Builder().url(serverUrl).build(), wsListener)
         } else {
-            webSocket?.close(1000, "User stopped stream")
-            webSocket = null
-            serverLogs = if (targetName.isNotEmpty()) "Found: ${targetName.uppercase()}!" else "Stream Stopped"
+            recording = false
+            webSocket?.close(1000, "session ended"); webSocket = null
         }
     }
+    LaunchedEffect(task, connected) {
+        if (connected && task.isNotBlank())
+            webSocket?.send(JSONObject().put("type", "task").put("task", task).toString())
+    }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
         ARSceneView(
             modifier = Modifier.fillMaxSize(),
-            // CRITICAL: share OUR engine/modelLoader with the scene (fixes invisible box).
             engine = engine,
             modelLoader = modelLoader,
             planeRenderer = true,
             onSessionUpdated = { session, frame ->
                 val camera = frame.camera
-                trackingStatus = if (camera.trackingState == TrackingState.TRACKING) "Tracking: Good" else "Tracking: Paused"
+                trackingStatus =
+                    if (camera.trackingState == TrackingState.TRACKING) "Tracking: Good" else "Tracking: Paused"
 
-                // --- DATA USAGE STATS (recompute ~2x/sec from atomic counters) ---
+                // --- data usage stats (~2x/sec) ---
                 run {
                     val nowMs = System.currentTimeMillis()
                     if (lastStatsTime == 0L) lastStatsTime = nowMs
                     if (nowMs - lastStatsTime >= 500) {
-                        val sent = totalSentBytes.get()
-                        val recv = totalRecvBytes.get()
+                        val sent = totalSentBytes.get(); val recv = totalRecvBytes.get()
                         val dtSec = (nowMs - lastStatsTime) / 1000.0
-                        val rateKbps = ((sent - lastSentSnapshot) + (recv - lastRecvSnapshot)) / 1024.0 / dtSec
+                        val rate = ((sent - lastSentSnapshot) + (recv - lastRecvSnapshot)) / 1024.0 / dtSec
                         dataStats = "Sent %.1fMB  Recv %.1fMB  %.0f KB/s".format(
-                            sent / 1048576.0, recv / 1048576.0, rateKbps
-                        )
-                        lastStatsTime = nowMs
-                        lastSentSnapshot = sent
-                        lastRecvSnapshot = recv
+                            sent / 1048576.0, recv / 1048576.0, rate)
+                        lastStatsTime = nowMs; lastSentSnapshot = sent; lastRecvSnapshot = recv
                     }
                 }
 
-                // --- TAP-TO-PLACE (debug) ---
+                // --- DORMANT: tap-to-place debug box ---
                 val tap = pendingTap
                 if (tap != null && camera.trackingState == TrackingState.TRACKING) {
                     pendingTap = null
-                    val tapHits = frame.hitTest(tap.x, tap.y)
-                    val planeHit = tapHits.firstOrNull {
+                    val planeHit = frame.hitTest(tap.x, tap.y).firstOrNull {
                         it.trackable is Plane && (it.trackable as Plane).isPoseInPolygon(it.hitPose)
                     }
-                    if (planeHit != null) {
-                        hitAnchor = planeHit.createAnchor()
-                    } else {
-                        val pose = camera.pose.compose(Pose.makeTranslation(0f, 0f, -1f))
-                        hitAnchor = session.createAnchor(pose)
-                    }
-                    debugDotPos = tap
-                    debugDotExpiry = System.currentTimeMillis() + 2000L
+                    hitAnchor = planeHit?.createAnchor()
+                        ?: session.createAnchor(camera.pose.compose(Pose.makeTranslation(0f, 0f, -1f)))
+                    debugDotPos = tap; debugDotExpiry = System.currentTimeMillis() + 2000L
                 }
 
-                // --- PLACEMENT LOGIC (from detection) ---
+                // --- DORMANT: place from a detection message ---
                 val currentTarget = targetCoord.value
                 if (currentTarget != null && camera.trackingState == TrackingState.TRACKING && hitAnchor == null) {
-                    val inputCoords = floatArrayOf(
-                        currentTarget.first.toFloat(),
-                        currentTarget.second.toFloat()
-                    )
-                    val outputCoords = FloatArray(2)
+                    val out = FloatArray(2)
                     frame.transformCoordinates2d(
                         com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED,
-                        inputCoords,
-                        com.google.ar.core.Coordinates2d.VIEW,
-                        outputCoords
-                    )
-
-                    val hitX = outputCoords[0]
-                    val hitY = outputCoords[1]
-
-                    debugDotPos = Offset(hitX, hitY)
-                    debugDotExpiry = System.currentTimeMillis() + 2000L
-
-                    // --- REAL HIT TEST ---
-                    val hitResults = frame.hitTest(hitX, hitY)
-                    val firstValidHit = hitResults.firstOrNull { hit ->
-                        hit.trackable is Plane && (hit.trackable as Plane).isPoseInPolygon(hit.hitPose)
-                    }
-                    if (firstValidHit != null) {
-                        hitAnchor = firstValidHit.createAnchor()
-                        Log.d("ARHit", "PLACED on plane at view($hitX, $hitY) | boxModel=${boxModel != null}")
-                        targetCoord.value = null
-                        isStreaming = false
-                    } else {
-                        Log.d("ARHit", "Detection at view($hitX, $hitY) but no plane there (hits=${hitResults.size}); waiting for next")
-                        targetCoord.value = null
-                    }
+                        floatArrayOf(currentTarget.first.toFloat(), currentTarget.second.toFloat()),
+                        com.google.ar.core.Coordinates2d.VIEW, out)
+                    debugDotPos = Offset(out[0], out[1]); debugDotExpiry = System.currentTimeMillis() + 2000L
+                    frame.hitTest(out[0], out[1]).firstOrNull {
+                        it.trackable is Plane && (it.trackable as Plane).isPoseInPolygon(it.hitPose)
+                    }?.let { hitAnchor = it.createAnchor() }
+                    targetCoord.value = null
                 }
 
-                // Expire the debug dot.
-                if (debugDotPos != null && System.currentTimeMillis() > debugDotExpiry) {
-                    debugDotPos = null
-                }
+                if (debugDotPos != null && System.currentTimeMillis() > debugDotExpiry) debugDotPos = null
 
-                // --- HAND OVERLAY: map normalized image landmarks -> VIEW pixels ---
-                val norm = handNorm.value
-                handViewPts = if (norm != null && norm.size >= 42 &&
-                    camera.trackingState == TrackingState.TRACKING) {
-                    FloatArray(norm.size).also { out ->
-                        frame.transformCoordinates2d(
-                            com.google.ar.core.Coordinates2d.IMAGE_NORMALIZED, norm,
-                            com.google.ar.core.Coordinates2d.VIEW, out)
-                    }
-                } else null
-
-                // --- STREAMING LOOP (encode offloaded; data-rate-constant interval) ---
-                if (isStreaming && camera.trackingState == TrackingState.TRACKING) {
-                    val currentTime = System.currentTimeMillis()
+                // --- MAIN: snap / record frame send (record @ frameInterval; 400ms at 1/4x) ---
+                if (connected && camera.trackingState == TrackingState.TRACKING) {
+                    val now = System.currentTimeMillis()
                     val frameIntervalMs = baseIntervalMs / (scaleFactor.toLong() * scaleFactor.toLong())
-                    if (currentTime - lastFrameTime > frameIntervalMs && encoding.compareAndSet(false, true)) {
-                        lastFrameTime = currentTime
+                    val doRecord = recording && (now - recordLastFrame >= frameIntervalMs)
+                    if ((doRecord || snapRequested) && encoding.compareAndSet(false, true)) {
+                        if (doRecord) recordLastFrame = now
+                        snapRequested = false
                         var launched = false
                         try {
                             frame.acquireCameraImage().use { image ->
                                 if (image.format == ImageFormat.YUV_420_888) {
-                                    val yuv = ImageUtils.extractYuv(image, currentTime)
+                                    val yuv = ImageUtils.extractYuv(image, now)
                                     launched = true
                                     scope.launch(Dispatchers.Default) {
                                         try {
-                                            val jpeg = ImageUtils.yuvToDownsampledJpeg(yuv, scaleFactor)
-                                            jpeg?.let {
-                                                val buffer = ByteBuffer.allocate(8 + it.size)
-                                                buffer.putLong(yuv.timestamp)
-                                                buffer.put(it)
-                                                webSocket?.send(buffer.array().toByteString())
+                                            ImageUtils.yuvToDownsampledJpeg(yuv, scaleFactor)?.let {
+                                                val b = ByteBuffer.allocate(8 + it.size)
+                                                b.putLong(yuv.timestamp); b.put(it)
+                                                webSocket?.send(b.array().toByteString())
                                                 totalSentBytes.addAndGet((8 + it.size).toLong())
                                             }
-                                        } catch (e: Exception) {
-                                            Log.e("ARStream", "Encode/send failed", e)
-                                        } finally {
-                                            encoding.set(false)
-                                        }
+                                        } catch (e: Exception) { Log.e("LLM", "send failed", e) }
+                                        finally { encoding.set(false) }
                                     }
                                 }
                             }
                         } catch (e: Exception) {
-                            Log.e("ARStream", "Frame acquisition failed", e)
-                        } finally {
-                            if (!launched) encoding.set(false)
-                        }
+                            Log.e("LLM", "acquire failed", e)
+                        } finally { if (!launched) encoding.set(false) }
                     }
                 }
             }
         ) {
-            // --- SCENE LIGHT ---
             LightNode(
-                engine = engine,
-                type = LightManager.Type.DIRECTIONAL,
+                engine = engine, type = LightManager.Type.DIRECTIONAL,
                 apply = {
-                    color(1.0f, 1.0f, 1.0f)
-                    intensity(100_000f)
-                    direction(0.0f, -1.0f, -1.0f)
-                    castShadows(false)
+                    color(1.0f, 1.0f, 1.0f); intensity(100_000f)
+                    direction(0.0f, -1.0f, -1.0f); castShadows(false)
                 }
             )
-
-            // --- DECLARATIVE 3D NODES ---
+            // DORMANT: placed AR box
             hitAnchor?.let { anchor ->
                 AnchorNode(anchor = anchor) {
-                    boxModel?.let { modelInstance ->
-                        ModelNode(
-                            modelInstance = modelInstance,
-                            scaleToUnits = 0.1f
-                        )
-                    }
+                    boxModel?.let { ModelNode(modelInstance = it, scaleToUnits = 0.1f) }
                 }
             }
         }
 
-        // --- TAP CATCHER (debug) ---
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures { offset -> pendingTap = offset }
-                }
+        // DORMANT: tap catcher for the debug box
+        Box(Modifier.fillMaxSize().pointerInput(Unit) {
+            detectTapGestures { offset -> pendingTap = offset }
+        })
+
+        // DORMANT: debug indicator
+        debugDotPos?.let { pos ->
+            Canvas(Modifier.fillMaxSize()) {
+                drawCircle(Color.Magenta.copy(alpha = pulseAlpha), pulseRadius, pos, style = Stroke(4f))
+                drawCircle(Color.Magenta, 8f, pos)
+            }
+        }
+
+        // ---- TASK ENTRY (top) ----
+        TaskInputBar(
+            currentTask = task,
+            onSet = { t ->
+                task = t; connected = true
+                chatMessages = chatMessages + ChatMessage("user", t)
+                status = "Task set"
+            },
+            modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth()
+                .padding(top = 40.dp, start = 10.dp, end = 10.dp)
         )
 
-        // --- DEBUG INDICATOR OVERLAY (2D, pure Compose) ---
-        debugDotPos?.let { pos ->
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                drawCircle(
-                    color = Color.Magenta.copy(alpha = pulseAlpha),
-                    radius = pulseRadius,
-                    center = pos,
-                    style = Stroke(width = 4f)
-                )
-                drawCircle(
-                    color = Color.Magenta,
-                    radius = 8f,
-                    center = pos
-                )
-            }
-        }
-
-        HandSkeletonOverlay(viewPts = handViewPts, detected = !handPredicted,
-            modifier = Modifier.fillMaxSize())
-
-        Box(Modifier.fillMaxSize().padding(top = 100.dp), contentAlignment = Alignment.TopCenter) {
-            Text(handState.uppercase() + if (handPredicted) "  ·KF" else "",
-                color = stateColor(handState), fontSize = 22.sp,
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(8.dp))
-                    .padding(horizontal = 14.dp, vertical = 6.dp))
-        }
-
-        // Latency + Data Usage Overlay
+        // ---- STATS (top-right) ----
         Column(
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 48.dp, end = 16.dp)
+            Modifier.align(Alignment.TopEnd).padding(top = 148.dp, end = 12.dp)
                 .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
             horizontalAlignment = Alignment.End
         ) {
-            Text(text = roundtripLatency, color = Color.Cyan, fontSize = 14.sp)
-            Text(text = dataStats, color = Color.Cyan, fontSize = 11.sp)
+            Text(roundtripLatency, color = Color.Cyan, fontSize = 12.sp)
+            Text(pingMs, color = Color.Cyan, fontSize = 11.sp)
+            Text(llmStats, color = Color.Cyan, fontSize = 11.sp)
+            Text(dataStats, color = Color.Cyan, fontSize = 10.sp)
         }
 
-        // Control Panel
+        // ---- bottom controls: one stacked column, nothing overlaps ----
         Column(
-            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                .padding(bottom = 20.dp, start = 12.dp, end = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(text = "Tap anywhere to drop a test box", color = Color.White, fontSize = 12.sp)
-            Text(text = trackingStatus, color = Color.Green)
-            Text(text = serverLogs, color = if (targetName.isNotEmpty()) Color.Green else Color.Yellow, fontSize = 18.sp)
+            // latest assistant message — collapses when hidden, sits above the buttons
+            TransientMessage(
+                latest = latestMsg, onExpand = { showChat = true },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // primary: tap = snap, hold = record; + chat toggle
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp)
+            ) {
+                SnapRecordButton(
+                    recording = recording,
+                    onSnap = {
+                        if (connected) {
+                            webSocket?.send(JSONObject().put("type", "snap").toString())
+                            snapRequested = true
+                        } else status = "Set a task first"
+                    },
+                    onRecordStart = { recording = true },
+                    onRecordStop = { recording = false }
+                )
+                Button(onClick = { showChat = !showChat }) { Text(if (showChat) "Hide" else "Chat") }
+            }
+
+            // secondary: resolution + ping
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 modifier = Modifier.background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(8.dp)).padding(4.dp)
             ) {
-                // Labels show the QUALITY fraction (1 = full, 1/2, 1/4) so it's intuitive
-                // that higher settings reduce frame quality.
-                listOf(1, 2, 4).forEach { factor ->
-                    val label = when (factor) {
-                        1 -> "1"
-                        2 -> "1/2"
-                        4 -> "1/4"
-                        else -> "1/$factor"
-                    }
+                listOf(1 to "1", 2 to "1/2", 4 to "1/4").forEach { (factor, label) ->
                     Button(
                         onClick = { scaleFactor = factor },
                         colors = ButtonDefaults.buttonColors(
                             containerColor = if (scaleFactor == factor) Color.Cyan else Color.Transparent,
                             contentColor = if (scaleFactor == factor) Color.Black else Color.White
                         ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Text(text = label)
-                    }
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) { Text(label, fontSize = 12.sp) }
                 }
+                Button(
+                    onClick = {
+                        val start = System.currentTimeMillis()
+                        client.newCall(Request.Builder().url("$pingUrl?t=$start").build())
+                            .enqueue(object : Callback {
+                                override fun onFailure(call: Call, e: IOException) { pingMs = "Ping failed" }
+                                override fun onResponse(call: Call, response: Response) {
+                                    pingMs = "Ping: ${System.currentTimeMillis() - start} ms"; response.close()
+                                }
+                            })
+                    },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                ) { Text("Ping", fontSize = 12.sp) }
             }
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Button(onClick = {
-                    serverLogs = "Pinging..."
-                    try {
-                        val request = Request.Builder().url(pingUrl).build()
-                        client.newCall(request).enqueue(object : Callback {
-                            override fun onFailure(call: Call, e: IOException) {
-                                serverLogs = "Ping Failed: ${e.localizedMessage}"
-                            }
 
-                            override fun onResponse(call: Call, response: Response) {
-                                serverLogs = "Ping Success: ${response.code}"
-                            }
-                        })
-                    } catch (e: IllegalArgumentException) {
-                        serverLogs = "Invalid URL Format"
-                    }
-                }) {
-                    Text("Test Ping")
-                }
-                Button(onClick = { isStreaming = !isStreaming }) {
-                    Text(if (isStreaming) "Stop Scanning" else "Start Scanning")
-                }
-            }
-        }
-    }
-}
-
-object ImageUtils {
-
-    class Yuv420Frame(
-        val width: Int,
-        val height: Int,
-        val y: ByteArray,
-        val u: ByteArray,
-        val v: ByteArray,
-        val yRowStride: Int,
-        val yPixelStride: Int,
-        val uRowStride: Int,
-        val uPixelStride: Int,
-        val vRowStride: Int,
-        val vPixelStride: Int,
-        val timestamp: Long
-    )
-
-    fun extractYuv(image: Image, timestamp: Long): Yuv420Frame {
-        val p = image.planes
-        val yb = p[0].buffer.duplicate()
-        val ub = p[1].buffer.duplicate()
-        val vb = p[2].buffer.duplicate()
-        val y = ByteArray(yb.remaining()); yb.get(y)
-        val u = ByteArray(ub.remaining()); ub.get(u)
-        val v = ByteArray(vb.remaining()); vb.get(v)
-        return Yuv420Frame(
-            image.width, image.height, y, u, v,
-            p[0].rowStride, p[0].pixelStride,
-            p[1].rowStride, p[1].pixelStride,
-            p[2].rowStride, p[2].pixelStride,
-            timestamp
-        )
-    }
-
-    fun yuvToDownsampledJpeg(f: Yuv420Frame, scaleFactor: Int): ByteArray? {
-        val newWidth = f.width / scaleFactor
-        val newHeight = f.height / scaleFactor
-        val ySize = newWidth * newHeight
-        val nv21 = ByteArray(ySize + (ySize / 2))
-
-        var outIdx = 0
-
-        for (row in 0 until newHeight) {
-            val srcRow = row * scaleFactor
-            for (col in 0 until newWidth) {
-                val srcCol = col * scaleFactor
-                nv21[outIdx++] = f.y[srcRow * f.yRowStride + srcCol * f.yPixelStride]
-            }
+            // status line
+            Text("$status  ·  $trackingStatus", color = Color.Yellow, fontSize = 11.sp)
         }
 
-        for (row in 0 until newHeight / 2) {
-            val srcRow = row * scaleFactor
-            for (col in 0 until newWidth / 2) {
-                val srcCol = col * scaleFactor
-                nv21[outIdx++] = f.v[srcRow * f.vRowStride + srcCol * f.vPixelStride]
-                nv21[outIdx++] = f.u[srcRow * f.uRowStride + srcCol * f.uPixelStride]
-            }
-        }
-
-        val out = ByteArrayOutputStream()
-        val yuvImage = YuvImage(nv21, ImageFormat.NV21, newWidth, newHeight, null)
-        yuvImage.compressToJpeg(Rect(0, 0, newWidth, newHeight), 80, out)
-        return out.toByteArray()
+        // ---- full chat sheet (overlay) ----
+        if (showChat) ChatSheet(chatMessages, { showChat = false }, Modifier.align(Alignment.BottomCenter))
     }
 }
