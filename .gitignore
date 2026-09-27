@@ -26,3 +26,6 @@ local.properties
 .venv/
 __pycache__/
 *.pyc
+
+# pre-restructure code kept on the Strix box, not tracked
+/.archive/
