@@ -23,6 +23,7 @@ gpu = [
     "mediapipe",
     "torch",
     "torchvision",
+    "triton-rocm; sys_platform == 'linux'",  # torch's ROCm dep; listed so the index source applies
     "ultralytics",
 ]
 
@@ -39,7 +40,7 @@ environments = ["sys_platform == 'linux'"]
 [tool.uv.sources]
 torch = { index = "pytorch-rocm" }
 torchvision = { index = "pytorch-rocm" }
-pytorch-triton-rocm = { index = "pytorch-rocm" }
+triton-rocm = { index = "pytorch-rocm" }
 
 [[tool.uv.index]]
 name = "pytorch-rocm"
