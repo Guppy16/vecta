@@ -53,6 +53,14 @@ data class CaptureRequest(val kind: String, val hint: String = "") : Message()
 @Serializable @SerialName("capture.ack")
 data class CaptureAck(val id: String, val frames: Int, val url: String? = null) : Message()
 
+@Serializable @SerialName("agent.message")
+data class AgentMessage(
+    val text: String,
+    val status: String = "info",       // searching | found | info | answer
+    val url: String? = null,
+    val latency_ms: Int? = null,
+) : Message()
+
 @Serializable @SerialName("pong")
 data class Pong(val t: Long, val server_t: Long) : Message()
 

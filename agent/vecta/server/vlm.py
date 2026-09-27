@@ -19,17 +19,13 @@ from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
 
+# Short on purpose: every token here is prefilled on every call (~1 ms each on the box).
 JUDGE_SYSTEM = (
-    "You are a real-time visual assistant. The user has given you a standing task. "
-    "You are shown the latest frame from their phone camera. Decide whether the task "
-    "condition is met in what you can see.\n"
-    "Respond with ONLY a JSON object and nothing else:\n"
-    '{"status": "searching" | "found" | "info", "say": "<short text or empty>", "count": <int>}\n'
-    '- "found": the condition IS satisfied. Put a brief, specific note in "say" (what, where), '
-    'and set "count" to how many distinct matching things are visible.\n'
-    '- "searching": not satisfied yet. "say" MUST be "" and "count" 0.\n'
-    '- "info": you must tell the user something (can\'t see clearly, need a different '
-    'angle). Keep "say" short.'
+    "Real-time camera watch. Standing task below. Look at the frame and answer with ONLY "
+    'JSON: {"status": "searching"|"found"|"info", "say": "", "count": 0}. '
+    "found = task condition is visible: say what/where briefly, count = matching things. "
+    'searching = not yet: say "" and count 0. info = you must tell the user something '
+    "(unclear, need another angle): say it briefly."
 )
 
 ANSWER_SYSTEM = (

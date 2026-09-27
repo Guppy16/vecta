@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 class Settings:
     host: str = os.environ.get("VECTA_HOST", "0.0.0.0")
     port: int = int(os.environ.get("VECTA_PORT", "8000"))
-    data_dir: Path = Path(os.environ.get("VECTA_DATA_DIR", Path.home() / ".vecta"))
+    data_dir: Path = Path(os.environ.get("VECTA_DATA_DIR", Path.home() / "vecta-data"))
 
 
 settings = Settings()

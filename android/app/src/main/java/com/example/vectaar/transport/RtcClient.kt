@@ -2,9 +2,10 @@ package com.example.vectaar.transport
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -21,6 +22,7 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStatsReport
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
@@ -35,14 +37,28 @@ import kotlin.time.Duration.Companion.seconds
 
 private const val TAG = "RtcClient"
 
+/** Outbound video numbers from WebRTC's own stats, sampled by the caller. */
+data class RtcStats(
+    val fps: Double? = null,
+    val bytesSent: Long = 0,
+    val framesEncoded: Long = 0,
+    val width: Int? = null,
+    val height: Int? = null,
+    val codec: String? = null,
+    val rttMs: Double? = null,          // ICE candidate-pair RTT
+    val availableKbps: Double? = null,  // estimated outgoing bandwidth
+)
+
 /**
  * One WebRTC session to the server: the back camera as a video track, plus a
  * "control" data channel carrying [Message]s. Signalling is a single HTTP
  * offer/answer (no trickle ICE, no STUN/TURN — both ends are on the tailnet).
+ * Single use: after [close], make a new instance to reconnect.
  */
 class RtcClient(
     private val context: Context,
     private val serverUrl: String,          // e.g. http://100.77.155.9:8000
+    private val eglBase: EglBase,           // shared with the preview renderer, outlives this client
     private val listener: Listener,
 ) {
     interface Listener {
@@ -50,7 +66,6 @@ class RtcClient(
         fun onConnectionState(state: String)
     }
 
-    val eglBase: EglBase = EglBase.create()
     private val http = OkHttpClient.Builder().readTimeout(30.seconds).build()
     private var factory: PeerConnectionFactory? = null
     private var capturer: CameraVideoCapturer? = null
@@ -59,11 +74,9 @@ class RtcClient(
     private var pc: PeerConnection? = null
     private var channel: DataChannel? = null
 
-    /** Attach a preview sink (a SurfaceViewRenderer) to the local camera track. */
     fun addSink(sink: VideoSink) { videoTrack?.addSink(sink) }
-    fun removeSink(sink: VideoSink) { videoTrack?.removeSink(sink) }
 
-    /** Starts the camera and negotiates the connection. Safe to call once. */
+    /** Starts the camera and negotiates the connection. */
     suspend fun connect(width: Int = 1280, height: Int = 720, fps: Int = 30) {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions()
@@ -89,7 +102,7 @@ class RtcClient(
         val config = PeerConnection.RTCConfiguration(emptyList()).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         }
-        val gathered = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val gathered = CompletableDeferred<Unit>()
         val peer = f.createPeerConnection(config, object : PeerObserver() {
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
                 if (state == PeerConnection.IceGatheringState.COMPLETE) gathered.complete(Unit)
@@ -112,6 +125,8 @@ class RtcClient(
         peer.setRemoteDescription(answer)
     }
 
+    val channelOpen: Boolean get() = channel?.state() == DataChannel.State.OPEN
+
     fun send(msg: Message): Boolean {
         val ch = channel ?: return false
         if (ch.state() != DataChannel.State.OPEN) return false
@@ -119,11 +134,17 @@ class RtcClient(
         return ch.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
     }
 
+    suspend fun stats(): RtcStats? {
+        val peer = pc ?: return null
+        val report = suspendCancellableCoroutine<RTCStatsReport> { cont -> peer.getStats { cont.resume(it) } }
+        return parseStats(report)
+    }
+
     fun close() {
         runCatching { capturer?.stopCapture() }
         channel?.close(); pc?.close()
         capturer?.dispose(); surfaceHelper?.dispose(); videoTrack?.dispose()
-        factory?.dispose(); eglBase.release()
+        factory?.dispose()
     }
 
     // --- signalling: POST the offer, get the answer ---
@@ -149,6 +170,26 @@ class RtcClient(
             Protocol.decode(String(bytes, StandardCharsets.UTF_8))?.let(listener::onMessage)
         }
     }
+}
+
+/** Pull the numbers we show out of a standard WebRTC stats report. */
+private fun parseStats(report: RTCStatsReport): RtcStats {
+    val all = report.statsMap.values
+    val out = all.firstOrNull { it.type == "outbound-rtp" && it.members["kind"] == "video" }
+    val codecId = out?.members?.get("codecId") as? String
+    val codec = codecId?.let { report.statsMap[it]?.members?.get("mimeType") as? String }
+    val pair = all.firstOrNull { it.type == "candidate-pair" && it.members["state"] == "succeeded" }
+    fun num(m: Map<String, Any>?, k: String): Double? = (m?.get(k) as? Number)?.toDouble()
+    return RtcStats(
+        fps = num(out?.members, "framesPerSecond"),
+        bytesSent = num(out?.members, "bytesSent")?.toLong() ?: 0,
+        framesEncoded = num(out?.members, "framesEncoded")?.toLong() ?: 0,
+        width = num(out?.members, "frameWidth")?.toInt(),
+        height = num(out?.members, "frameHeight")?.toInt(),
+        codec = codec?.removePrefix("video/"),
+        rttMs = num(pair?.members, "currentRoundTripTime")?.let { it * 1000 },
+        availableKbps = num(pair?.members, "availableOutgoingBitrate")?.let { it / 1000 },
+    )
 }
 
 /** Suspending wrappers over the callback-style WebRTC API. */

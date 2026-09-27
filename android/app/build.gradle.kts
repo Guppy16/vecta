@@ -69,6 +69,8 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.coil.compose)       // images from the box (captures, found frames)
+    implementation(libs.coil.network.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)      // signalling only (one POST); media goes over WebRTC
     implementation(libs.webrtc)      // prebuilt libwebrtc (org.webrtc)

@@ -16,7 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import com.example.vectaar.ui.CaptureScreen
+import com.example.vectaar.ui.VectaScreen
 
 class MainActivity : ComponentActivity() {
     private var hasCamera by mutableStateOf(false)
@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             if (hasCamera) {
                 val vm: SessionViewModel by viewModels()   // created only once we can open the camera
-                CaptureScreen(vm)
+                VectaScreen(vm)
             } else {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Camera permission required.")
