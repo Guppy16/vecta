@@ -1,0 +1,47 @@
+[project]
+name = "vecta"
+version = "0.1.0"
+description = "Vecta server: agent orchestration, WebRTC media ingest and local GPU jobs"
+requires-python = ">=3.14"
+dependencies = [
+    "aiortc",
+    "av",
+    "fastapi",
+    "httpx",
+    "numpy",
+    "openai",
+    "opencv-contrib-python",
+    "pillow",
+    "python-dotenv",
+    "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+# Local GPU jobs. torch must come from the ROCm index matching the box's ROCm
+# version — set via [[tool.uv.index]] once the box is provisioned.
+gpu = [
+    "mediapipe",
+    "torch",
+    "ultralytics",
+]
+
+[dependency-groups]
+dev = ["ruff", "pytest", "pytest-asyncio"]
+
+[build-system]
+requires = ["uv_build>=0.7"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+extend-exclude = ["scripts/legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

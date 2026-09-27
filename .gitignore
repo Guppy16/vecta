@@ -14,3 +14,15 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# secrets / local env
+.env
+.env.*
+
+# vendored, not ours
+/arcore-android-sdk/
+
+# python
+.venv/
+__pycache__/
+*.pyc
