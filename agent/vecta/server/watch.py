@@ -13,18 +13,19 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-import cv2
 import numpy as np
+from PIL import Image
 
 from vecta.protocol import messages as m
 from vecta.server.frames import Frame, FrameBuffer
 from vecta.server.sessions import Session
-from vecta.server.vlm import Vlm
+from vecta.server.vlm import Verdict, Vlm
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ KEYFRAMES_KEPT = 6  # recent judged frames handed to `answer`
 
 
 def dhash(gray: np.ndarray, size: int = 8) -> int:
-    small = cv2.resize(gray, (size + 1, size))
+    """Difference hash: 64 bits of 'is the pixel brighter than its left neighbour'."""
+    small = np.asarray(Image.fromarray(gray).resize((size + 1, size), Image.Resampling.BILINEAR))
     bits = (small[:, 1:] > small[:, :-1]).flatten()
     return int("".join("1" if b else "0" for b in bits), 2)
 
@@ -45,7 +47,10 @@ def hamming(a: int, b: int) -> int:
 
 
 def sharpness(gray: np.ndarray) -> float:
-    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+    """Variance of the 4-neighbour Laplacian; blur flattens it towards zero."""
+    g = gray.astype(np.float32)
+    lap = -4 * g[1:-1, 1:-1] + g[:-2, 1:-1] + g[2:, 1:-1] + g[1:-1, :-2] + g[1:-1, 2:]
+    return float(lap.var())
 
 
 @dataclass
@@ -125,6 +130,22 @@ class Watcher:
             self.last_pick_at = time.time()
             await asyncio.sleep(max(0.0, MIN_INTERVAL_S - (time.monotonic() - t0)))
 
+    def _record(self, kf: Keyframe, verdict: Verdict) -> None:
+        """Keep every judged frame + verdict: a labelled test set falls out of normal use."""
+        n = sum(1 for _ in self.session.dir.glob("judged_*.jpg"))
+        path = self.session.dir / f"judged_{n:04d}.jpg"
+        path.write_bytes(kf.jpeg)
+        row = {
+            "file": path.name,
+            "task": self.session.task,
+            "ts_ms": kf.frame.ts_ms,
+            "status": verdict.status,
+            "say": verdict.say,
+            "latency_ms": verdict.latency_ms,
+        }
+        with (self.session.dir / "judged.jsonl").open("a") as f:
+            f.write(json.dumps(row) + "\n")
+
     async def _judge(self, task: str, kf: Keyframe) -> None:
         try:
             verdict = await self.vlm.judge(task, kf.jpeg)
@@ -134,6 +155,7 @@ class Watcher:
             return
         self._last_hash = kf.hash
         self.last_verdict = f"{verdict.status} {verdict.latency_ms}ms {verdict.say}"
+        self._record(kf, verdict)
         self.keyframes = (self.keyframes + [kf])[-KEYFRAMES_KEPT * 2 :]
         log.info(
             "session %s: %s %dms %r",
