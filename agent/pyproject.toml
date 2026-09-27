@@ -17,11 +17,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local GPU jobs. torch must come from the ROCm index matching the box's ROCm
-# version — set via [[tool.uv.index]] once the box is provisioned.
+# Local GPU jobs. The box has no system ROCm; PyTorch's rocm7.2 wheels bundle
+# the runtime and only need the amdgpu kernel driver (Strix Halo = gfx1151).
 gpu = [
     "mediapipe",
     "torch",
+    "torchvision",
     "ultralytics",
 ]
 
@@ -31,6 +32,19 @@ dev = ["ruff", "pytest", "pytest-asyncio"]
 [build-system]
 requires = ["uv_build>=0.7"]
 build-backend = "uv_build"
+
+[tool.uv]
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-rocm" }
+torchvision = { index = "pytorch-rocm" }
+pytorch-triton-rocm = { index = "pytorch-rocm" }
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm7.2"
+explicit = true
 
 [tool.uv.build-backend]
 module-root = ""
