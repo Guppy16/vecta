@@ -131,6 +131,17 @@ class CaptureAck(Message):
 
 
 @dataclass
+class AgentMessage(Message):
+    """Something the agent (or a watcher on its behalf) wants to tell the user."""
+
+    type: ClassVar[str] = "agent.message"
+    text: str = ""
+    status: str = "info"  # searching | found | info | answer
+    url: str | None = None  # the frame this refers to, if any
+    latency_ms: int | None = None
+
+
+@dataclass
 class Pong(Message):
     type: ClassVar[str] = "pong"
     t: int = 0  # echoed from the ping

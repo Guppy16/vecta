@@ -25,8 +25,11 @@ Handler = Callable[["Peer", m.Message], Awaitable[list[m.Message]]]
 class Peer:
     """Wraps an RTCPeerConnection plus the session it feeds."""
 
-    def __init__(self, session: Session, handler: Handler) -> None:
+    def __init__(
+        self, session: Session, handler: Handler, on_close: Callable[[Peer], None] | None = None
+    ) -> None:
         self.session = session
+        self._on_close = on_close
         # No STUN/TURN: both ends are on the tailnet with stable addresses, and the
         # default STUN lookups add ~5 s to gathering on multi-interface hosts.
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
@@ -53,6 +56,8 @@ class Peer:
         for t in self._tasks:
             t.cancel()
         await self.pc.close()
+        if self._on_close is not None:
+            self._on_close(self)
 
     # --- callbacks ---------------------------------------------------------------
 
