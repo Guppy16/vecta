@@ -29,3 +29,6 @@ __pycache__/
 
 # pre-restructure code kept on the Strix box, not tracked
 /.archive/
+
+# recorded sessions / datasets (box)
+/data/

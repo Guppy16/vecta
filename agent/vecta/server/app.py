@@ -33,7 +33,10 @@ log = logging.getLogger(__name__)
 class Settings:
     host: str = os.environ.get("VECTA_HOST", "0.0.0.0")
     port: int = int(os.environ.get("VECTA_PORT", "8000"))
-    data_dir: Path = Path(os.environ.get("VECTA_DATA_DIR", Path.home() / "vecta-data"))
+    # the checkout's data/ (gitignored) unless overridden; this file is agent/vecta/server/app.py
+    data_dir: Path = Path(
+        os.environ.get("VECTA_DATA_DIR", Path(__file__).resolve().parents[3] / "data")
+    )
 
 
 settings = Settings()

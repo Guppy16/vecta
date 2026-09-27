@@ -36,7 +36,7 @@ Message shapes live in `agent/vecta/protocol/messages.py` and are mirrored in
 cd agent
 uv sync                 # base deps
 uv sync --extra gpu     # + torch (ROCm 7.2 wheels) / ultralytics / mediapipe — on the box only
-uv run vecta-server     # VECTA_PORT (8000), VECTA_HOST, VECTA_DATA_DIR (~/vecta-data)
+uv run vecta-server     # VECTA_PORT (8000), VECTA_HOST, VECTA_DATA_DIR (default: <repo>/data, gitignored)
 uv run pytest
 ```
 
