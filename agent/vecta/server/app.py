@@ -74,6 +74,31 @@ async def asset(session_id: str, name: str) -> FileResponse:
     return FileResponse(path)
 
 
+@app.get("/debug/sessions")
+async def debug_sessions() -> list[dict]:
+    """What each live session is doing — for poking at from a laptop."""
+    out = []
+    for sid, peer in peers.items():
+        s, w = peer.session, watchers.get(sid)
+        latest = s.frames.latest()
+        out.append(
+            {
+                "session": sid,
+                "connection": peer.pc.connectionState,
+                "task": s.task,
+                "frames_received": s.frames.received,
+                "frames_buffered": len(s.frames),
+                "latest_frame_age_ms": int(time.time() * 1000 - latest.ts_ms) if latest else None,
+                "watching": bool(w and w.running),
+                "last_pick_age_s": round(time.time() - w.last_pick_at, 1)
+                if w and w.last_pick_at
+                else None,
+                "last_verdict": w.last_verdict if w else None,
+            }
+        )
+    return out
+
+
 def _cleanup(session_id: str) -> None:
     if w := watchers.pop(session_id, None):
         w.stop()
