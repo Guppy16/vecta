@@ -3,6 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 val localProperties = Properties()
@@ -67,21 +68,8 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    // ARCore
-    implementation("com.google.ar:core:1.54.0")
-
-    // Sceneview for Compose (Modern AR rendering)
-    implementation("io.github.sceneview:arsceneview:4.18.0")
-
-    // Websockets
-    implementation("com.squareup.okhttp3:okhttp:5.4.0")
-
-    // media pipe for hand detection
-    implementation("com.google.mediapipe:tasks-vision:latest.release")
-
-
-    implementation("androidx.camera:camera-core:1.4.1")
-    implementation("androidx.camera:camera-camera2:1.4.1")
-    implementation("androidx.camera:camera-lifecycle:1.4.1")
-    implementation("androidx.camera:camera-view:1.4.1")
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)      // signalling only (one POST); media goes over WebRTC
+    implementation(libs.webrtc)      // prebuilt libwebrtc (org.webrtc)
 }

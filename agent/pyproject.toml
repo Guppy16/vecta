@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]",
 ]
 
+[project.scripts]
+vecta-server = "vecta.server.app:main"
+
 [project.optional-dependencies]
 # Local GPU jobs. The box has no system ROCm; PyTorch's rocm7.2 wheels bundle
 # the runtime and only need the amdgpu kernel driver (Strix Halo = gfx1151).
