@@ -30,7 +30,8 @@ from vecta.server.vlm import Verdict, Vlm
 log = logging.getLogger(__name__)
 
 DEDUP_HAMMING = 8  # dHash distance below which two frames are "the same"
-FOUND_DEBOUNCE_S = 6.0
+JUDGE_WIDTH = 448  # px sent to the VLM; ~3x faster than 720 with no loss on "is X there"
+GONE_AFTER = 2  # consecutive "searching" verdicts before a found instance counts as gone
 MIN_INTERVAL_S = 0.5  # floor between calls even if the model is fast
 KEYFRAMES_KEPT = 6  # recent judged frames handed to `answer`
 
@@ -56,8 +57,15 @@ def sharpness(gray: np.ndarray) -> float:
 @dataclass
 class Keyframe:
     frame: Frame
-    jpeg: bytes
+    jpeg: bytes  # full resolution, for assets and the test set
+    jpeg_small: bytes  # what the model sees
     hash: int
+
+
+def _jpeg(img: Image.Image, quality: int = 85) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
 
 
 PICK_STRIDE = 5  # judge sharpness on every Nth recent frame; Laplacian on 720p isn't free
@@ -81,9 +89,11 @@ def _pick(buffer: FrameBuffer, last_hash: int | None) -> Keyframe | None:
     h = dhash(gray)
     if last_hash is not None and hamming(h, last_hash) < DEDUP_HAMMING:
         return None
-    buf = io.BytesIO()
-    frame.image.to_image().save(buf, format="JPEG", quality=85)
-    return Keyframe(frame, buf.getvalue(), h)
+    img = frame.image.to_image()
+    small = img.resize(
+        (JUDGE_WIDTH, int(img.height * JUDGE_WIDTH / img.width)), Image.Resampling.BILINEAR
+    )
+    return Keyframe(frame, _jpeg(img), _jpeg(small), h)
 
 
 @dataclass
@@ -94,7 +104,8 @@ class Watcher:
     keyframes: list[Keyframe] = field(default_factory=list)
     _task: asyncio.Task[None] | None = None
     _last_hash: int | None = None
-    _last_found: float = 0.0
+    _in_view: int = 0  # instances currently reported as found (0 = searching)
+    _misses: int = 0  # consecutive "searching" verdicts while something was in view
     last_pick_at: float = 0.0
     last_verdict: str = ""
 
@@ -117,7 +128,7 @@ class Watcher:
         return self._task is not None and not self._task.done()
 
     def recent_jpegs(self) -> list[bytes]:
-        return [k.jpeg for k in self.keyframes[-KEYFRAMES_KEPT:]]
+        return [k.jpeg_small for k in self.keyframes[-KEYFRAMES_KEPT:]]
 
     async def _run(self) -> None:
         task = self.session.task or ""
@@ -148,7 +159,7 @@ class Watcher:
 
     async def _judge(self, task: str, kf: Keyframe) -> None:
         try:
-            verdict = await self.vlm.judge(task, kf.jpeg)
+            verdict = await self.vlm.judge(task, kf.jpeg_small)
         except Exception as e:  # keep watching through transient model errors
             log.warning("session %s: vlm error: %s", self.session.id, e)
             await asyncio.sleep(2)
@@ -164,18 +175,24 @@ class Watcher:
             verdict.latency_ms,
             verdict.say,
         )
+        # Only new instances reach the user: a found is reported once, then stays quiet
+        # while the model keeps confirming it, until it leaves view or the count grows.
         if verdict.status == "found":
-            now = time.monotonic()
-            if now - self._last_found < FOUND_DEBOUNCE_S:
+            self._misses = 0
+            if verdict.count <= self._in_view:
                 return
-            self._last_found = now
+            self._in_view = verdict.count
             path = self.session.dir / f"found_{int(time.time())}.jpg"
             path.write_bytes(kf.jpeg)
             url = self.session.asset_url(path)
-        elif verdict.status == "info" and verdict.say:
-            url = None
         else:
-            return  # searching: nothing to say
+            if self._in_view and verdict.status == "searching":
+                self._misses += 1
+                if self._misses >= GONE_AFTER:
+                    self._in_view = 0
+            if verdict.status != "info" or not verdict.say:
+                return
+            url = None
         self.send(
             m.AgentMessage(
                 text=verdict.say, status=verdict.status, url=url, latency_ms=verdict.latency_ms

@@ -24,9 +24,10 @@ JUDGE_SYSTEM = (
     "You are shown the latest frame from their phone camera. Decide whether the task "
     "condition is met in what you can see.\n"
     "Respond with ONLY a JSON object and nothing else:\n"
-    '{"status": "searching" | "found" | "info", "say": "<short text or empty>"}\n'
-    '- "found": the condition IS satisfied. Put a brief, specific note in "say" (what, where).\n'
-    '- "searching": not satisfied yet. "say" MUST be "".\n'
+    '{"status": "searching" | "found" | "info", "say": "<short text or empty>", "count": <int>}\n'
+    '- "found": the condition IS satisfied. Put a brief, specific note in "say" (what, where), '
+    'and set "count" to how many distinct matching things are visible.\n'
+    '- "searching": not satisfied yet. "say" MUST be "" and "count" 0.\n'
     '- "info": you must tell the user something (can\'t see clearly, need a different '
     'angle). Keep "say" short.'
 )
@@ -43,6 +44,7 @@ class Verdict:
     status: str  # searching | found | info
     say: str
     latency_ms: int
+    count: int = 0  # matching instances in view, when found
 
 
 class Vlm:
@@ -63,8 +65,8 @@ class Vlm:
             max_tokens=120,
             json_mode=True,
         )
-        status, say = parse_verdict(text)
-        return Verdict(status, say, int((time.monotonic() - t0) * 1000))
+        status, say, count = parse_verdict(text)
+        return Verdict(status, say, int((time.monotonic() - t0) * 1000), count)
 
     async def answer(self, question: str, jpegs: list[bytes], task: str | None) -> str:
         system = ANSWER_SYSTEM + (f"\nThe user's standing task is: {task}" if task else "")
@@ -103,7 +105,7 @@ class Vlm:
         return resp.choices[0].message.content or ""
 
 
-def parse_verdict(text: str) -> tuple[str, str]:
+def parse_verdict(text: str) -> tuple[str, str, int]:
     """Tolerate code fences and stray prose around the JSON. Unparseable -> info."""
     m = re.search(r"\{.*\}", text, re.S)
     if m:
@@ -111,7 +113,17 @@ def parse_verdict(text: str) -> tuple[str, str]:
             obj = json.loads(m.group(0))
             status = str(obj.get("status", "info"))
             if status in ("searching", "found", "info"):
-                return status, str(obj.get("say", "") or "")
-        except json.JSONDecodeError:
+                count = obj.get("count", 1 if status == "found" else 0)
+                count = (
+                    int(count)
+                    if isinstance(count, int | float)
+                    else (1 if status == "found" else 0)
+                )
+                return (
+                    status,
+                    str(obj.get("say", "") or ""),
+                    max(count, 1 if status == "found" else 0),
+                )
+        except json.JSONDecodeError, ValueError:
             pass
-    return "info", text.strip()[:200]
+    return "info", text.strip()[:200], 0
