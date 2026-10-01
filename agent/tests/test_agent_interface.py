@@ -32,21 +32,26 @@ def test_parse_box_qwen_grid() -> None:
 
 
 def test_wav_to_pcm16_resamples_float_wav() -> None:
-    import io
-    import wave
+    """A WAVE_FORMAT_IEEE_FLOAT file like Kokoro's (wave.open rejects these)."""
+    import struct
 
     rate, seconds = 24000, 0.5
     t = np.arange(int(rate * seconds)) / rate
-    samples = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(4)
-        w.setframerate(rate)
-        w.writeframes(samples.tobytes())
-    pcm = _wav_to_pcm16(buf.getvalue())
-    out = np.frombuffer(pcm, dtype=np.int16)
-    assert len(out) == 16000 * seconds
+    data = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32).tobytes()
+    fmt = struct.pack("<HHIIHH", 3, 1, rate, rate * 4, 4, 32)  # tag 3 = IEEE float
+    wav = (
+        b"RIFF"
+        + struct.pack("<I", 4 + 8 + len(fmt) + 8 + len(data))
+        + b"WAVE"
+        + b"fmt "
+        + struct.pack("<I", len(fmt))
+        + fmt
+        + b"data"
+        + struct.pack("<I", len(data))
+        + data
+    )
+    out = np.frombuffer(_wav_to_pcm16(wav), dtype=np.int16)
+    assert abs(len(out) - 16000 * seconds) < 64  # resampler edge effects
     assert 0.4 < abs(out).max() / 32767 < 0.55
 
 

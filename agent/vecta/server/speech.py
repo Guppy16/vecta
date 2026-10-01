@@ -7,10 +7,10 @@ import io
 import logging
 import os
 import secrets
-import wave
 
+import av
 import httpx
-import numpy as np
+from av import AudioResampler
 
 from vecta.protocol import messages as m
 
@@ -55,17 +55,13 @@ class Speaker:
 
 
 def _wav_to_pcm16(wav_bytes: bytes) -> bytes:
-    """Kokoro returns 24 kHz float32 WAV; the phone wants 16 kHz int16."""
-    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
-        rate, width, channels = w.getframerate(), w.getsampwidth(), w.getnchannels()
-        raw = w.readframes(w.getnframes())
-    if width == 4:  # IEEE float
-        samples = np.frombuffer(raw, dtype=np.float32)
-    else:
-        samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-    if channels > 1:
-        samples = samples.reshape(-1, channels).mean(axis=1)
-    if rate != OUT_RATE:  # linear resample is fine for speech
-        n = int(len(samples) * OUT_RATE / rate)
-        samples = np.interp(np.linspace(0, len(samples) - 1, n), np.arange(len(samples)), samples)
-    return (np.clip(samples, -1, 1) * 32767).astype(np.int16).tobytes()
+    """Kokoro returns 24 kHz float32 WAV (which `wave` can't read); decode with PyAV."""
+    resampler = AudioResampler(format="s16", layout="mono", rate=OUT_RATE)
+    out = bytearray()
+    with av.open(io.BytesIO(wav_bytes)) as container:
+        for frame in container.decode(audio=0):
+            for r in resampler.resample(frame):
+                out += r.to_ndarray().tobytes()
+    for r in resampler.resample(None):  # flush
+        out += r.to_ndarray().tobytes()
+    return bytes(out)
