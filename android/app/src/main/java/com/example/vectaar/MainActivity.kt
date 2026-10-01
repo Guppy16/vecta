@@ -21,16 +21,20 @@ import com.example.vectaar.ui.VectaScreen
 
 class MainActivity : ComponentActivity() {
     private var hasCamera by mutableStateOf(false)
-    private val askCamera = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-        hasCamera = it
-    }
+    private val askPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+            hasCamera = granted[Manifest.permission.CAMERA] == true   // mic is optional: no audio track if denied
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)   // it's a live camera: never doze mid-task
-        hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
-            PackageManager.PERMISSION_GRANTED
-        if (!hasCamera) askCamera.launch(Manifest.permission.CAMERA)
+        val wanted = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        val missing = wanted.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        hasCamera = Manifest.permission.CAMERA !in missing
+        if (missing.isNotEmpty()) askPermissions.launch(missing.toTypedArray())   // ask for whatever's missing
         setContent {
             if (hasCamera) {
                 val vm: SessionViewModel by viewModels()   // created only once we can open the camera

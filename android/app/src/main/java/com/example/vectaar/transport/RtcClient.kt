@@ -113,6 +113,9 @@ class RtcClient(
         }) ?: error("createPeerConnection returned null")
         pc = peer
         peer.addTrack(track, listOf("stream0"))
+        // always-on microphone; the server segments and transcribes it
+        val audioSource = f.createAudioSource(MediaConstraints())
+        peer.addTrack(f.createAudioTrack("audio0", audioSource), listOf("stream0"))
         channel = peer.createDataChannel("control", DataChannel.Init()).apply {
             registerObserver(ChannelObserver())
         }

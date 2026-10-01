@@ -9,6 +9,11 @@ import com.example.vectaar.transport.Capture
 import com.example.vectaar.transport.CaptureAck
 import com.example.vectaar.transport.CaptureRequest
 import com.example.vectaar.transport.InputText
+import com.example.vectaar.transport.MarkerSpec
+import com.example.vectaar.transport.OverlaySet
+import com.example.vectaar.transport.Transcript
+import com.example.vectaar.transport.TtsChunk
+import com.example.vectaar.transport.TtsPlayer
 import com.example.vectaar.transport.Message
 import com.example.vectaar.transport.PageRender
 import com.example.vectaar.transport.Ping
@@ -59,6 +64,9 @@ data class UiState(
     val stats: RtcStats? = null,
     val kbps: Double? = null,          // bytesSent delta over the sampling interval
     val expandedPage: PageRender? = null,
+    val markers: List<MarkerSpec> = emptyList(),   // live overlay, image-normalised coords
+    val frameW: Int = 0,                          // image size the markers refer to
+    val frameH: Int = 0,
 )
 
 /**
@@ -73,6 +81,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
     private var rtc: RtcClient? = null
+    private val tts = TtsPlayer()
     private var nextId = 1L
 
     init { viewModelScope.launch { connectLoop() } }
@@ -171,13 +180,16 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(hint = null, captures = if (item != null) it.captures + item else it.captures)
             }
             is Pong -> _state.update { it.copy(rttMs = System.currentTimeMillis() - msg.t) }
+            is OverlaySet -> _state.update { it.copy(markers = msg.markers, frameW = msg.frame_w, frameH = msg.frame_h) }
+            is Transcript -> append(ChatItem(nextId++, "user", msg.text, status = "voice"))
+            is TtsChunk -> tts.play(msg)
             else -> Log.d("Session", "unhandled $msg")
         }
     }
 
     private fun append(item: ChatItem) = _state.update { it.copy(messages = (it.messages + item).takeLast(500)) }
 
-    override fun onCleared() { rtc?.close(); eglBase.release() }
+    override fun onCleared() { rtc?.close(); tts.release(); eglBase.release() }
 }
 
 /** A VideoSink the UI can attach to once, forwarding to whichever track is live. */

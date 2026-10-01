@@ -61,6 +61,21 @@ data class AgentMessage(
     val latency_ms: Int? = null,
 ) : Message()
 
+@Serializable
+data class MarkerSpec(
+    val id: String, val label: String = "", val x: Float, val y: Float,
+    val w: Float = 0f, val h: Float = 0f, val color: String = "#46C46A",
+)
+
+@Serializable @SerialName("overlay.set")
+data class OverlaySet(val markers: List<MarkerSpec> = emptyList(), val frame_w: Int = 0, val frame_h: Int = 0) : Message()
+
+@Serializable @SerialName("transcript")
+data class Transcript(val text: String, val final: Boolean = true) : Message()
+
+@Serializable @SerialName("tts.chunk")
+data class TtsChunk(val id: String, val seq: Int, val last: Boolean, val data: String) : Message()
+
 @Serializable @SerialName("pong")
 data class Pong(val t: Long, val server_t: Long) : Message()
 

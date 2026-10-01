@@ -66,6 +66,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -135,11 +136,55 @@ private fun Viewfinder(vm: SessionViewModel, ui: UiState) {
                 }
             },
         )
+        MarkerOverlay(ui, Modifier.fillMaxSize())
         ui.hint?.let {
             Text(it, style = MaterialTheme.typography.bodyMedium, color = Color.White,
                 modifier = Modifier.align(Alignment.Center).overlay().padding(horizontal = 12.dp, vertical = 8.dp))
         }
         ConnectionChip(ui, Modifier.align(Alignment.TopEnd).padding(8.dp))
+    }
+}
+
+/**
+ * Draws the agent's markers over the live view. Marker coords are normalised to the
+ * streamed frame; the renderer shows that frame SCALE_ASPECT_FILL-cropped, so map through
+ * the same scale/offset here.
+ */
+@Composable
+private fun MarkerOverlay(ui: UiState, modifier: Modifier) {
+    if (ui.markers.isEmpty() || ui.frameW == 0 || ui.frameH == 0) return
+    val textMeasurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val labelStyle = MaterialTheme.typography.labelLarge.copy(color = Color.White)
+    androidx.compose.foundation.Canvas(modifier) {
+        val scale = maxOf(size.width / ui.frameW, size.height / ui.frameH)
+        val offX = (size.width - ui.frameW * scale) / 2f
+        val offY = (size.height - ui.frameH * scale) / 2f
+        for (mk in ui.markers) {
+            val color = runCatching { Color(android.graphics.Color.parseColor(mk.color)) }.getOrDefault(Color.Green)
+            val cx = offX + mk.x * ui.frameW * scale
+            val cy = offY + mk.y * ui.frameH * scale
+            val w = mk.w * ui.frameW * scale
+            val h = mk.h * ui.frameH * scale
+            if (w > 8f && h > 8f) {
+                drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(cx - w / 2, cy - h / 2),
+                    size = androidx.compose.ui.geometry.Size(w, h), cornerRadius = androidx.compose.ui.geometry.CornerRadius(12f),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
+            } else {
+                drawCircle(color, radius = 28f, center = androidx.compose.ui.geometry.Offset(cx, cy),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
+                drawCircle(color, radius = 6f, center = androidx.compose.ui.geometry.Offset(cx, cy))
+            }
+            if (mk.label.isNotEmpty()) {
+                val layout = textMeasurer.measure(mk.label, labelStyle)
+                val pad = 10f
+                val left = cx - w / 2
+                val top = cy - h / 2 - layout.size.height - 2 * pad - 4f
+                drawRoundRect(color, topLeft = androidx.compose.ui.geometry.Offset(left, top),
+                    size = androidx.compose.ui.geometry.Size(layout.size.width + 2 * pad, layout.size.height + 2 * pad),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(8f))
+                drawText(layout, topLeft = androidx.compose.ui.geometry.Offset(left + pad, top + pad))
+            }
+        }
     }
 }
 
@@ -233,7 +278,7 @@ private fun CommentRow(item: ChatItem, onImage: (String) -> Unit, onPage: (PageR
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (mine) {
-                    Text(if (item.status == "task") "task" else "you", style = MaterialTheme.typography.labelSmall,
+                    Text(when (item.status) { "task" -> "task"; "voice" -> "you (voice)"; else -> "you" }, style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                 } else {
                     Box(Modifier.size(7.dp).clip(CircleShape).background(statusColor(item.status)))
