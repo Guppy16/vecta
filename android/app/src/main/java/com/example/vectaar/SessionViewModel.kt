@@ -147,6 +147,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
                 client.connect(sessionId = _state.value.sessionId)
                 client.addSink(previewSink)
                 client.setMicEnabled(!_state.value.micMuted)   // keep the choice across reconnects
+                tts.routeToSpeaker()                            // WebRTC re-inits audio on connect; re-pin the route
                 backoffMs = 1000L
                 launch { onConnected(client) }
                 val why = ended.await()
