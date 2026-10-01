@@ -116,6 +116,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     fun toggleDeafen() {
         val deaf = !_state.value.deafened
         tts.deafened = deaf
+        rtc?.setPlayoutEnabled(!deaf)
         _state.update { it.copy(deafened = deaf) }
     }
 
@@ -146,7 +147,8 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(connection = "connecting") }
                 client.connect(sessionId = _state.value.sessionId)
                 client.addSink(previewSink)
-                client.setMicEnabled(!_state.value.micMuted)   // keep the choice across reconnects
+                client.setMicEnabled(!_state.value.micMuted)   // keep the choices across reconnects
+                client.setPlayoutEnabled(!_state.value.deafened)
                 tts.routeToSpeaker()                            // WebRTC re-inits audio on connect; re-pin the route
                 backoffMs = 1000L
                 launch { onConnected(client) }

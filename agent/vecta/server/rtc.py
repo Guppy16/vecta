@@ -15,6 +15,7 @@ from aiortc.mediastreams import MediaStreamError, MediaStreamTrack
 
 from vecta.protocol import messages as m
 from vecta.server.sessions import Session
+from vecta.server.tts_track import TtsTrack
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class Peer:
         # default STUN lookups add ~5 s to gathering on multi-interface hosts.
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
         self.channel: RTCDataChannel | None = None
+        self.voice = TtsTrack()  # our speech, played by the phone's WebRTC audio path
         self._handler = handler
         self._tasks: set[asyncio.Task[None]] = set()
 
@@ -48,6 +50,7 @@ class Peer:
 
     async def answer(self, offer: RTCSessionDescription) -> RTCSessionDescription:
         await self.pc.setRemoteDescription(offer)
+        self.pc.addTrack(self.voice)  # rides the phone's audio transceiver in the other direction
         await self.pc.setLocalDescription(await self.pc.createAnswer())
         return self.pc.localDescription
 

@@ -131,6 +131,9 @@ class RtcClient(
 
     val channelOpen: Boolean get() = channel?.state() == DataChannel.State.OPEN
 
+    /** Deafened = stop playing the agent's voice track (and any data-channel speech). */
+    fun setPlayoutEnabled(on: Boolean) { pc?.receivers?.forEach { r -> r.track()?.takeIf { it.kind() == "audio" }?.setEnabled(on) } }
+
     /** Muted = the track sends silence; the server hears nothing to transcribe. */
     fun setMicEnabled(on: Boolean) { audioTrack?.setEnabled(on) }
 

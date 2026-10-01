@@ -99,3 +99,22 @@ def test_talker_history_and_parse() -> None:
         t.heard(f"u{i}")
     assert len(t.history) == HISTORY_TURNS and t.history[-1]["content"] == f"u{HISTORY_TURNS + 4}"
     assert "BRIEFING" in t._system()
+
+
+def test_tts_track_paces_and_fills_silence() -> None:
+    import asyncio
+
+    from vecta.server.tts_track import SAMPLES, TtsTrack
+
+    async def main() -> None:
+        t = TtsTrack()
+        t.enqueue(b"\x01\x00" * (SAMPLES + 10))  # 1.03 frames of audio
+        f1 = await t.recv()
+        f2 = await t.recv()
+        a1 = f1.to_ndarray().ravel()
+        a2 = f2.to_ndarray().ravel()
+        assert f1.sample_rate == 16000 and len(a1) == SAMPLES and (a1 == 1).all()
+        assert (a2[:10] == 1).all() and (a2[10:] == 0).all()  # remainder, then silence
+        assert f2.pts == SAMPLES
+
+    asyncio.run(main())

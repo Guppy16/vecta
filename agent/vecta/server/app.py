@@ -8,6 +8,7 @@ agent answers through /sessions/{id}/say, /mark, /watch, /page, /send.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -114,7 +115,7 @@ async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None
         session.inbox.append("voice", text=text, started_at=round(started_at, 3))
         peer.send(m.Transcript(text=text))
         if settings.earcons:
-            peer.send(earcon("heard"))  # instant "got that" while a reply is composed
+            peer.voice.enqueue(base64.b64decode(earcon("heard").data))  # instant "got that"
         if settings.talker and (lv := live.get(session.id)):
             asyncio.create_task(_talk(lv, text))
 
@@ -149,11 +150,12 @@ async def _speak(
     except Exception as e:
         log.warning("tts failed: %s", e)
         return False
-    seconds = sum(len(c.data) for c in chunks) * 3 / 4 / (16000 * 2)  # base64 -> PCM16 @16k
-    if lv.listener:  # don't transcribe our own voice coming back through the mic
+    pcm = b"".join(base64.b64decode(c.data) for c in chunks)
+    # WebRTC's echo canceller handles most of our voice; the mute covers what it doesn't
+    seconds = lv.peer.voice.pending_seconds + len(pcm) / (16000 * 2)
+    if lv.listener:
         await lv.listener.mute_for(seconds + 0.5)
-    for chunk in chunks:
-        lv.peer.send(chunk)
+    lv.peer.voice.enqueue(pcm)
     return True
 
 
