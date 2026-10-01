@@ -27,7 +27,10 @@ PERSONA = (
     "(background conversation, noise, half sentences). If answering needs looking at the camera, "
     "or reasoning you can't do from the briefing, say you'll take a look and set escalate=true "
     "— the main agent will follow up. Never invent device details. "
-    'Answer ONLY as JSON: {"reply": "...", "escalate": false}.'
+    "You have one tool: if the user asks what the camera sees right now, or whether something "
+    'is in view, reply with {"tool": "look"} and nothing else; you will get a description '
+    "of the current camera frame as a tool result, then answer from it. "
+    'Otherwise answer ONLY as JSON: {"reply": "...", "escalate": false}.'
 )
 HISTORY_TURNS = 24
 
@@ -37,6 +40,7 @@ class Reply:
     text: str
     escalate: bool
     latency_ms: int
+    tool: str | None = None  # the talker wants a tool run first (e.g. "look")
 
 
 @dataclass
@@ -59,6 +63,14 @@ class Talker:
 
     async def turn(self, text: str) -> Reply:
         self.heard(text)
+        return await self._complete()
+
+    async def tool_result(self, tool: str, result: str) -> Reply:
+        """Feed a tool's output back and let the talker answer with it."""
+        self._push("user", f"[tool {tool} result] {result}")
+        return await self._complete()
+
+    async def _complete(self) -> Reply:
         t0 = time.monotonic()
         kwargs: dict = {
             "model": self.model,
@@ -70,9 +82,12 @@ class Talker:
         }
         resp = await self._client.chat.completions.create(**kwargs)
         raw = resp.choices[0].message.content or ""
-        reply, escalate = parse_reply(raw)
-        self._push("assistant", json.dumps({"reply": reply, "escalate": escalate}))
-        return Reply(reply, escalate, int((time.monotonic() - t0) * 1000))
+        reply, escalate, tool = parse_reply(raw)
+        if tool:
+            self._push("assistant", json.dumps({"tool": tool}))
+        else:
+            self._push("assistant", json.dumps({"reply": reply, "escalate": escalate}))
+        return Reply(reply, escalate, int((time.monotonic() - t0) * 1000), tool)
 
     def _system(self) -> str:
         return f"{PERSONA}\nBRIEFING: {self.briefing}"
@@ -82,12 +97,17 @@ class Talker:
         del self.history[:-HISTORY_TURNS]
 
 
-def parse_reply(raw: str) -> tuple[str, bool]:
+def parse_reply(raw: str) -> tuple[str, bool, str | None]:
     m = re.search(r"\{.*\}", raw, re.S)
     if m:
         try:
             obj = json.loads(m.group(0))
-            return str(obj.get("reply", "") or "").strip(), bool(obj.get("escalate", False))
+            tool = obj.get("tool")
+            return (
+                str(obj.get("reply", "") or "").strip(),
+                bool(obj.get("escalate", False)),
+                str(tool) if tool else None,
+            )
         except json.JSONDecodeError:
             pass
-    return raw.strip()[:200], False
+    return raw.strip()[:200], False, None

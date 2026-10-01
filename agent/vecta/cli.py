@@ -5,6 +5,7 @@
     vecta say SID "text" [--silent]      message the user (spoken unless --silent)
     vecta task SID "text"                set the task label shown on the phone
     vecta brief SID "text"               update the talker's briefing (what it may tell the user)
+    vecta look SID                       latest keyframe + a one-line VLM description
     vecta mark SID "the left button" [--label 1] [--color "#46C46A"]
     vecta unmark SID [ID]                clear one marker or all
     vecta watch SID "a hand touches the panel"   start a VLM watch (empty text stops it)
@@ -58,6 +59,9 @@ def main() -> None:
     s.add_argument("--silent", action="store_true", help="text only, no speech")
     s.add_argument("--status", default="answer")
 
+    lk = sub.add_parser("look")
+    lk.add_argument("sid")
+
     br = sub.add_parser("brief")
     br.add_argument("sid")
     br.add_argument("text")
@@ -105,6 +109,12 @@ def main() -> None:
             _post(f"/sessions/{a.sid}/task", {"text": a.text})
         case "brief":
             _post(f"/sessions/{a.sid}/brief", {"text": a.text})
+        case "look":
+            print(
+                json.dumps(
+                    httpx.get(f"{SERVER}/sessions/{a.sid}/look", timeout=60).json(), indent=1
+                )
+            )
         case "mark":
             _post(
                 f"/sessions/{a.sid}/mark",

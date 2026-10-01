@@ -90,9 +90,10 @@ def test_earcon_is_short_valid_pcm() -> None:
 def test_talker_history_and_parse() -> None:
     from vecta.server.talker import HISTORY_TURNS, Talker, parse_reply
 
-    assert parse_reply('{"reply": "Yes.", "escalate": false}') == ("Yes.", False)
-    assert parse_reply('```json\n{"reply": "", "escalate": true}\n```') == ("", True)
-    assert parse_reply("plain text") == ("plain text", False)
+    assert parse_reply('{"reply": "Yes.", "escalate": false}') == ("Yes.", False, None)
+    assert parse_reply('```json\n{"reply": "", "escalate": true}\n```') == ("", True, None)
+    assert parse_reply('{"tool": "look"}') == ("", False, "look")
+    assert parse_reply("plain text") == ("plain text", False, None)
     t = Talker()
     t.said("Hold it steady.")
     for i in range(HISTORY_TURNS + 5):

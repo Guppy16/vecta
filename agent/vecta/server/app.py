@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import logging
 import os
@@ -25,6 +26,7 @@ from fastapi.responses import FileResponse
 
 from vecta.protocol import messages as m
 from vecta.server.audio import Listener, Transcriber
+from vecta.server.frames import Frame
 from vecta.server.ground import MarkerSpec, MarkerTracker
 from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
@@ -130,6 +132,10 @@ async def _talk(lv: Live, text: str) -> None:
     s = lv.peer.session
     try:
         reply = await lv.talker.turn(text)
+        if reply.tool == "look":  # the talker's one tool: describe the current frame
+            desc = await describe_view(s)
+            s.inbox.append("tool", name="look", result=desc)
+            reply = await lv.talker.tool_result("look", desc)
     except Exception as e:
         log.warning("talker failed: %s", e)
         return
@@ -139,6 +145,40 @@ async def _talk(lv: Live, text: str) -> None:
     if reply.text:
         s.inbox.append("agent", text=reply.text, by="talker", latency_ms=reply.latency_ms)
         await _speak(lv, reply.text, status="answer", latency_ms=reply.latency_ms)
+
+
+async def describe_view(s: Session) -> str:
+    """What the camera shows right now, in a sentence — for the talker and `vecta look`."""
+    frame = s.frames.latest()
+    if frame is None:
+        return "No camera frame has arrived yet."
+    jpeg = await asyncio.to_thread(_jpeg_small, frame)
+    brightness = await asyncio.to_thread(_brightness, jpeg)
+    if brightness < 12:
+        return (
+            "The camera image is completely black: the lens is covered or the phone is face down."
+        )
+    text = await vlm.answer(
+        "Describe what is in view in one or two short sentences, naming any device, "
+        "buttons, labels or display text you can read.",
+        [jpeg],
+        s.task,
+    )
+    return text
+
+
+def _jpeg_small(frame: Frame) -> bytes:
+    img = frame.image.to_image()
+    img = img.resize((448, int(img.height * 448 / img.width)))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def _brightness(jpeg: bytes) -> float:
+    from PIL import Image, ImageStat
+
+    return ImageStat.Stat(Image.open(io.BytesIO(jpeg)).convert("L")).mean[0]
 
 
 async def _speak(
@@ -261,6 +301,23 @@ async def say(session_id: str, request: Request) -> dict:
     spoken = await _speak(lv, text, status=body.get("status", "answer"))
     lv.peer.send(m.Status(phase="idle"))
     return {"sent": True, "spoken": spoken}
+
+
+@app.get("/sessions/{session_id}/look")
+async def look(session_id: str) -> dict:
+    """Latest keyframe + a one-line description, for the main agent."""
+    lv = _live(session_id)
+    s = lv.peer.session
+    frames = (
+        sorted((s.dir / "keyframes").glob("kf_*.jpg")) if (s.dir / "keyframes").is_dir() else []
+    )
+    latest = frames[-1] if frames else None
+    return {
+        "description": await describe_view(s),
+        "keyframe": str(latest) if latest else None,
+        "url": s.asset_url(latest, sub="keyframes") if latest else None,
+        "frames_received": s.frames.received,
+    }
 
 
 @app.post("/sessions/{session_id}/brief")
