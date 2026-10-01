@@ -60,6 +60,7 @@ class Live:
     keyframer: Keyframer
     markers: MarkerTracker
     watcher: Watcher | None = None
+    listener: Listener | None = None
 
 
 live: dict[str, Live] = {}
@@ -104,11 +105,14 @@ async def rtc_offer(request: Request) -> dict[str, str]:
 
 
 async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None:
-    def heard(text: str) -> None:
-        session.inbox.append("voice", text=text)
+    def heard(text: str, started_at: float) -> None:
+        session.inbox.append("voice", text=text, started_at=round(started_at, 3))
         peer.send(m.Transcript(text=text))
 
-    await Listener(stt, heard).run(track)
+    listener = Listener(stt, heard)
+    if lv := live.get(session.id):
+        lv.listener = listener
+    await listener.run(track)
 
 
 def _on_peer_closed(session_id: str) -> None:
@@ -208,7 +212,11 @@ async def say(session_id: str, request: Request) -> dict:
     lv.peer.session.inbox.append("agent", text=text, spoken=speak)
     if speak:
         try:
-            for chunk in await tts.chunks(text):
+            chunks = await tts.chunks(text)
+            seconds = sum(len(c.data) for c in chunks) * 3 / 4 / (16000 * 2)  # base64 -> PCM16 @16k
+            if lv.listener:  # don't transcribe our own voice coming back through the mic
+                lv.listener.muted_until = time.time() + seconds + 0.5
+            for chunk in chunks:
                 lv.peer.send(chunk)
         except Exception as e:
             log.warning("tts failed: %s", e)

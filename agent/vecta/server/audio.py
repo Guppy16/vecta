@@ -12,6 +12,8 @@ from __future__ import annotations
 import io
 import logging
 import os
+import re
+import time
 import wave
 from collections.abc import Callable
 
@@ -28,6 +30,7 @@ FRAME_BYTES = RATE * FRAME_MS // 1000 * 2  # PCM16 mono
 MIN_UTTERANCE_MS = 400
 END_SILENCE_MS = 600
 MAX_UTTERANCE_MS = 15000
+NON_SPEECH = re.compile(r"^\s*(\[[A-Z_ ]+\]|\([a-z ]+\)|\.+)\s*$")  # [BLANK_AUDIO], (music), ...
 
 
 class Transcriber:
@@ -56,13 +59,22 @@ class Transcriber:
 
 
 class Listener:
-    """Consumes one audio track; calls `on_text(text)` per utterance."""
+    """Consumes one audio track; calls `on_text(text, started_at)` per utterance.
+
+    `muted_until` (epoch seconds) is set by the server while the agent is speaking,
+    so the phone's own speaker output isn't transcribed back as the user.
+    """
 
     def __init__(
-        self, transcriber: Transcriber, on_text: Callable[[str], None], aggressiveness: int = 2
+        self,
+        transcriber: Transcriber,
+        on_text: Callable[[str, float], None],
+        aggressiveness: int = 2,
     ) -> None:
         self._stt = transcriber
         self._on_text = on_text
+        self.muted_until = 0.0
+        self._started_at = 0.0
         self._vad = webrtcvad.Vad(aggressiveness)
         self._resampler = AudioResampler(format="s16", layout="mono", rate=RATE)
         self._pending = b""  # resampled bytes not yet cut into VAD frames
@@ -83,6 +95,8 @@ class Listener:
         while len(self._pending) >= FRAME_BYTES:
             chunk, self._pending = self._pending[:FRAME_BYTES], self._pending[FRAME_BYTES:]
             if self._vad.is_speech(chunk, RATE):
+                if not self._utterance:
+                    self._started_at = time.time()
                 self._utterance += chunk
                 self._voiced_ms += FRAME_MS
                 self._silence_ms = 0
@@ -94,14 +108,16 @@ class Listener:
                 await self._flush()
 
     async def _flush(self) -> None:
-        pcm, voiced = bytes(self._utterance), self._voiced_ms
+        pcm, voiced, started = bytes(self._utterance), self._voiced_ms, self._started_at
         self._utterance, self._voiced_ms, self._silence_ms = bytearray(), 0, 0
         if voiced < MIN_UTTERANCE_MS:
             return  # a click, a cough
+        if started < self.muted_until:
+            return  # that was us talking
         try:
             text = await self._stt.transcribe(pcm)
         except Exception as e:
             log.warning("stt failed: %s", e)
             return
-        if text:
-            self._on_text(text)
+        if text and not NON_SPEECH.match(text):
+            self._on_text(text, started)
