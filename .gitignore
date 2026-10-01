@@ -32,3 +32,6 @@ __pycache__/
 
 # recorded sessions / datasets (box)
 /data/
+
+# experiments, agent workspaces, throwaway venvs (box)
+/.scratch/
