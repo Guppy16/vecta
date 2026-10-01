@@ -30,7 +30,7 @@ FRAME_BYTES = RATE * FRAME_MS // 1000 * 2  # PCM16 mono
 MIN_UTTERANCE_MS = 400
 END_SILENCE_MS = 600
 MAX_UTTERANCE_MS = 15000
-NON_SPEECH = re.compile(r"^\s*(\[[A-Z_ ]+\]|\([a-z ]+\)|\.+)\s*$")  # [BLANK_AUDIO], (music), ...
+NON_SPEECH = re.compile(r"^\s*(\[[^\]]*\]|\([^)]*\)|[\s.\-]+)\s*$")  # [BLANK_AUDIO], [typing], (music), "-"
 
 
 class Transcriber:

@@ -77,7 +77,7 @@ class RtcClient(
     fun addSink(sink: VideoSink) { videoTrack?.addSink(sink) }
 
     /** Starts the camera and negotiates the connection. */
-    suspend fun connect(width: Int = 1280, height: Int = 720, fps: Int = 30) {
+    suspend fun connect(sessionId: String? = null, width: Int = 1280, height: Int = 720, fps: Int = 30) {
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions()
         )
@@ -124,7 +124,7 @@ class RtcClient(
         peer.setLocalDescription(offer)
         gathered.await()                       // all candidates go in the SDP; no trickle
         val local = peer.localDescription ?: error("no local description")
-        val answer = withContext(Dispatchers.IO) { signal(local) }
+        val answer = withContext(Dispatchers.IO) { signal(local, sessionId) }
         peer.setRemoteDescription(answer)
     }
 
@@ -152,8 +152,9 @@ class RtcClient(
 
     // --- signalling: POST the offer, get the answer ---
 
-    private fun signal(offer: SessionDescription): SessionDescription {
-        val body = JSONObject().put("sdp", offer.description).put("type", "offer").toString()
+    private fun signal(offer: SessionDescription, sessionId: String?): SessionDescription {
+        val body = JSONObject().put("sdp", offer.description).put("type", "offer")
+            .put("session_id", sessionId ?: JSONObject.NULL).toString()   // resume our identity
         val req = Request.Builder().url("$serverUrl/rtc/offer")
             .post(body.toRequestBody("application/json".toMediaType())).build()
         http.newCall(req).execute().use { resp ->

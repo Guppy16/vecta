@@ -78,7 +78,8 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     val eglBase: EglBase = EglBase.create()
     val previewSink = ProxySink()
 
-    private val _state = MutableStateFlow(UiState())
+    private val prefs = app.getSharedPreferences("vecta", android.content.Context.MODE_PRIVATE)
+    private val _state = MutableStateFlow(UiState(sessionId = prefs.getString("session_id", null)))
     val state: StateFlow<UiState> = _state
     private var rtc: RtcClient? = null
     private val tts = TtsPlayer(app)
@@ -129,7 +130,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
             rtc = client
             try {
                 _state.update { it.copy(connection = "connecting") }
-                client.connect()
+                client.connect(sessionId = _state.value.sessionId)
                 client.addSink(previewSink)
                 backoffMs = 1000L
                 launch { onConnected(client) }
@@ -170,7 +171,10 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun handle(msg: Message) {
         when (msg) {
-            is SessionState -> _state.update { it.copy(sessionId = msg.session_id, task = msg.task ?: it.task) }
+            is SessionState -> {
+                prefs.edit().putString("session_id", msg.session_id).apply()   // same identity next launch
+                _state.update { it.copy(sessionId = msg.session_id, task = msg.task ?: it.task) }
+            }
             is Status -> _state.update { it.copy(phase = msg.phase, statusText = msg.text) }
             is AgentMessage -> append(ChatItem(nextId++, "agent", msg.text, msg.status, msg.url, latencyMs = msg.latency_ms))
             is PageRender -> append(ChatItem(nextId++, "agent", "", status = "page", page = msg))
