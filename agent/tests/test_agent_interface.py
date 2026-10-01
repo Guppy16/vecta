@@ -75,3 +75,13 @@ def test_session_store_resumes_unknown_but_valid_id(tmp_path: Path) -> None:
     assert a.id == "abc123-XYZ" and a.dir.name == "abc123-XYZ"
     assert store.get_or_create("abc123-XYZ", "http://x") is a
     assert store.get_or_create("../evil", "http://x").id != "../evil"  # bad ids get a fresh one
+
+
+def test_earcon_is_short_valid_pcm() -> None:
+    import base64
+
+    from vecta.server.speech import earcon
+
+    chunk = earcon("heard")
+    pcm = np.frombuffer(base64.b64decode(chunk.data), dtype=np.int16)
+    assert 0.1 < len(pcm) / 16000 < 0.2 and abs(pcm).max() < 16000 and chunk.last

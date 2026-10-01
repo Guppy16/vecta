@@ -27,7 +27,7 @@ from vecta.server.ground import MarkerSpec, MarkerTracker
 from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
-from vecta.server.speech import Speaker
+from vecta.server.speech import Speaker, earcon
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -42,6 +42,7 @@ class Settings:
     data_dir: Path = Path(
         os.environ.get("VECTA_DATA_DIR", Path(__file__).resolve().parents[3] / "data")
     )
+    earcons: bool = os.environ.get("VECTA_EARCONS", "1") != "0"
 
 
 settings = Settings()
@@ -108,6 +109,8 @@ async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None
     def heard(text: str, started_at: float) -> None:
         session.inbox.append("voice", text=text, started_at=round(started_at, 3))
         peer.send(m.Transcript(text=text))
+        if settings.earcons:
+            peer.send(earcon("heard"))  # instant "got that" while the agent composes a reply
 
     listener = Listener(stt, heard)
     if lv := live.get(session.id):

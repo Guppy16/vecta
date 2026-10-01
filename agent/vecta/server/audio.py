@@ -28,7 +28,7 @@ RATE = 16000
 FRAME_MS = 30  # webrtcvad accepts 10/20/30 ms frames
 FRAME_BYTES = RATE * FRAME_MS // 1000 * 2  # PCM16 mono
 MIN_UTTERANCE_MS = 400
-END_SILENCE_MS = 600
+END_SILENCE_MS = 350  # end of utterance; shorter = snappier, risks splitting slow sentences
 MAX_UTTERANCE_MS = 15000
 # Whisper's non-speech tokens: [BLANK_AUDIO], [typing], (music), or just punctuation.
 NON_SPEECH = re.compile(r"^\s*(\[[^\]]*\]|\([^)]*\)|[\s.\-]+)\s*$")

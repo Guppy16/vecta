@@ -10,6 +10,7 @@ import secrets
 
 import av
 import httpx
+import numpy as np
 from av import AudioResampler
 
 from vecta.protocol import messages as m
@@ -52,6 +53,16 @@ class Speaker:
             m.TtsChunk(id=uid, seq=i, last=i == len(parts) - 1, data=base64.b64encode(p).decode())
             for i, p in enumerate(parts)
         ]
+
+
+def earcon(kind: str = "heard") -> m.TtsChunk:
+    """A short two-note blip the phone plays instantly, e.g. to say 'got that'."""
+    notes = {"heard": (660, 880), "thinking": (523, 523)}[kind]
+    t = np.linspace(0, 0.07, int(OUT_RATE * 0.07), endpoint=False)
+    env = np.minimum(1, np.minimum(t / 0.01, (0.07 - t) / 0.02))  # click-free attack/release
+    pcm = np.concatenate([np.sin(2 * np.pi * f * t) * env * 0.25 for f in notes])
+    data = (pcm * 32767).astype(np.int16).tobytes()
+    return m.TtsChunk(id=f"earcon-{kind}", seq=0, last=True, data=base64.b64encode(data).decode())
 
 
 def _wav_to_pcm16(wav_bytes: bytes) -> bytes:
