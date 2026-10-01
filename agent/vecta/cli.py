@@ -3,6 +3,7 @@
     vecta sessions                       list live sessions
     vecta tail SID [-n 30] [-f]          show (and follow) a session's inbox
     vecta say SID "text" [--silent]      message the user (spoken unless --silent)
+    vecta task SID "text"                set the task label shown on the phone
     vecta mark SID "the left button" [--label 1] [--color "#46C46A"]
     vecta unmark SID [ID]                clear one marker or all
     vecta watch SID "a hand touches the panel"   start a VLM watch (empty text stops it)
@@ -56,6 +57,10 @@ def main() -> None:
     s.add_argument("--silent", action="store_true", help="text only, no speech")
     s.add_argument("--status", default="answer")
 
+    tk = sub.add_parser("task")
+    tk.add_argument("sid")
+    tk.add_argument("text")
+
     mk = sub.add_parser("mark")
     mk.add_argument("sid")
     mk.add_argument("query", help="what to find in the live view, e.g. 'the leftmost button'")
@@ -91,6 +96,8 @@ def main() -> None:
                 f"/sessions/{a.sid}/say",
                 {"text": a.text, "speak": not a.silent, "status": a.status},
             )
+        case "task":
+            _post(f"/sessions/{a.sid}/task", {"text": a.text})
         case "mark":
             _post(
                 f"/sessions/{a.sid}/mark",

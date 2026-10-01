@@ -91,7 +91,7 @@ async def rtc_offer(request: Request) -> dict[str, str]:
     peer = Peer(
         session,
         handle,
-        on_close=lambda p: _on_peer_closed(p.session.id),
+        on_close=_on_peer_closed,
         on_audio=lambda track: _listen(session, peer, track),
     )
     lv = Live(
@@ -115,10 +115,11 @@ async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None
     await listener.run(track)
 
 
-def _on_peer_closed(session_id: str) -> None:
-    lv = live.pop(session_id, None)
-    if lv is None:
-        return
+def _on_peer_closed(peer: Peer) -> None:
+    lv = live.get(peer.session.id)
+    if lv is None or lv.peer is not peer:
+        return  # a newer connection already replaced this one
+    live.pop(peer.session.id)
     lv.keyframer.stop()
     lv.markers.remove(None)
     if lv.watcher:
@@ -222,6 +223,18 @@ async def say(session_id: str, request: Request) -> dict:
             log.warning("tts failed: %s", e)
             return {"sent": True, "spoken": False, "error": str(e)}
     return {"sent": True, "spoken": speak}
+
+
+@app.post("/sessions/{session_id}/task")
+async def set_task(session_id: str, request: Request) -> dict:
+    """Set the task label the phone shows (the agent's understanding of the job)."""
+    body = await request.json()
+    lv = _live(session_id)
+    s = lv.peer.session
+    s.task = body.get("text") or None
+    s.inbox.append("task", text=s.task, by="agent")
+    lv.peer.send(m.SessionState(session_id=s.id, task=s.task))
+    return {"task": s.task}
 
 
 @app.post("/sessions/{session_id}/mark")
