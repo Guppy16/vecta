@@ -18,6 +18,8 @@ class TtsPlayer(context: Context) {
     private val rate = 16000
     private val audioManager = context.getSystemService(AudioManager::class.java)
 
+    @Volatile var deafened = false   // drop the agent's speech entirely
+
     init { routeToSpeaker() }
 
     private fun routeToSpeaker() {
@@ -47,6 +49,7 @@ class TtsPlayer(context: Context) {
     init { track.play() }
 
     fun play(chunk: TtsChunk) {
+        if (deafened) return
         val pcm = Base64.decode(chunk.data, Base64.DEFAULT)
         if (pcm.isNotEmpty()) track.write(pcm, 0, pcm.size)   // blocks only if the buffer is full
     }

@@ -71,6 +71,7 @@ class RtcClient(
     private var capturer: CameraVideoCapturer? = null
     private var surfaceHelper: SurfaceTextureHelper? = null
     private var videoTrack: VideoTrack? = null
+    private var audioTrack: org.webrtc.AudioTrack? = null
     private var pc: PeerConnection? = null
     private var channel: DataChannel? = null
 
@@ -115,7 +116,7 @@ class RtcClient(
         peer.addTrack(track, listOf("stream0"))
         // always-on microphone; the server segments and transcribes it
         val audioSource = f.createAudioSource(MediaConstraints())
-        peer.addTrack(f.createAudioTrack("audio0", audioSource), listOf("stream0"))
+        audioTrack = f.createAudioTrack("audio0", audioSource).also { peer.addTrack(it, listOf("stream0")) }
         channel = peer.createDataChannel("control", DataChannel.Init()).apply {
             registerObserver(ChannelObserver())
         }
@@ -129,6 +130,9 @@ class RtcClient(
     }
 
     val channelOpen: Boolean get() = channel?.state() == DataChannel.State.OPEN
+
+    /** Muted = the track sends silence; the server hears nothing to transcribe. */
+    fun setMicEnabled(on: Boolean) { audioTrack?.setEnabled(on) }
 
     fun send(msg: Message): Boolean {
         val ch = channel ?: return false

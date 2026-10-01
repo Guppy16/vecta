@@ -1,6 +1,8 @@
 package com.example.vectaar.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -102,7 +104,7 @@ fun VectaScreen(vm: SessionViewModel) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
                 Viewfinder(vm, ui)
-                Header(ui, tab, onSelectTab = { tab = it }, onClearTask = vm::newTask)
+                Header(ui, tab, onSelectTab = { tab = it }, onClearTask = vm::newTask, onToggleMic = vm::toggleMic, onToggleDeafen = vm::toggleDeafen)
                 Box(Modifier.weight(1f)) {
                     when (tab) {
                         0 -> CommentStream(ui.messages, onImage = { zoomUrl = it }, onPage = vm::expandPage)
@@ -209,7 +211,8 @@ private fun Modifier.overlay() = background(Color.Black.copy(alpha = .55f), Roun
 // --- header: task line + pane chips, one block ---
 
 @Composable
-private fun Header(ui: UiState, tab: Int, onSelectTab: (Int) -> Unit, onClearTask: () -> Unit) {
+private fun Header(ui: UiState, tab: Int, onSelectTab: (Int) -> Unit, onClearTask: () -> Unit,
+                   onToggleMic: () -> Unit, onToggleDeafen: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer)
         .padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -228,7 +231,7 @@ private fun Header(ui: UiState, tab: Int, onSelectTab: (Int) -> Unit, onClearTas
             Text(bits.joinToString(" · "), style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
                 color = muted, maxLines = 1)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
             TABS.forEachIndexed { i, t ->
                 val on = i == tab
                 Text(t, style = MaterialTheme.typography.labelLarge,
@@ -237,6 +240,9 @@ private fun Header(ui: UiState, tab: Int, onSelectTab: (Int) -> Unit, onClearTas
                         .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
                         .clickable { onSelectTab(i) }.padding(horizontal = 12.dp, vertical = 6.dp))
             }
+            Spacer(Modifier.weight(1f))
+            ToggleChip(if (ui.micMuted) "mic off" else "mic on", active = !ui.micMuted, onClick = onToggleMic)
+            ToggleChip(if (ui.deafened) "voice off" else "voice on", active = !ui.deafened, onClick = onToggleDeafen)
         }
     }
 }
@@ -414,4 +420,16 @@ private fun ZoomDialog(url: String, onClose: () -> Unit) {
                 .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y))
         }
     }
+}
+
+
+/** Small on/off pill: dimmed + outlined when off. */
+@Composable
+private fun ToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
+    val bg = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+    val fg = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    Text(label, style = MaterialTheme.typography.labelMedium, color = fg,
+        modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(bg)
+            .then(if (active) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)))
+            .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 5.dp))
 }

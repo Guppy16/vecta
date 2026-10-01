@@ -64,6 +64,8 @@ data class UiState(
     val stats: RtcStats? = null,
     val kbps: Double? = null,          // bytesSent delta over the sampling interval
     val expandedPage: PageRender? = null,
+    val micMuted: Boolean = false,
+    val deafened: Boolean = false,
     val markers: List<MarkerSpec> = emptyList(),   // live overlay, image-normalised coords
     val frameW: Int = 0,                          // image size the markers refer to
     val frameH: Int = 0,
@@ -105,6 +107,18 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
         append(ChatItem(nextId++, "user", text))
     }
 
+    fun toggleMic() {
+        val muted = !_state.value.micMuted
+        rtc?.setMicEnabled(!muted)
+        _state.update { it.copy(micMuted = muted) }
+    }
+
+    fun toggleDeafen() {
+        val deaf = !_state.value.deafened
+        tts.deafened = deaf
+        _state.update { it.copy(deafened = deaf) }
+    }
+
     fun newTask() { _state.update { it.copy(task = null, phase = "idle") } }
 
     fun capturePhoto() {
@@ -132,6 +146,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(connection = "connecting") }
                 client.connect(sessionId = _state.value.sessionId)
                 client.addSink(previewSink)
+                client.setMicEnabled(!_state.value.micMuted)   // keep the choice across reconnects
                 backoffMs = 1000L
                 launch { onConnected(client) }
                 val why = ended.await()
