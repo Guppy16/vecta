@@ -56,6 +56,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)   // mic/volume toggles; R8 strips the rest
     implementation(libs.androidx.compose.material.icons.core)   // Close + Send glyphs
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)

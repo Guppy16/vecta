@@ -35,6 +35,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -81,7 +88,11 @@ import com.example.vectaar.transport.PageRender
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 
-private val TABS = listOf("Comments", "Captures", "Stats")
+private val TAB_ICONS = listOf(
+    Icons.AutoMirrored.Outlined.Chat to "Comments",
+    Icons.Outlined.PhotoLibrary to "Captures",
+    Icons.Outlined.BarChart to "Stats",
+)
 private const val CAMERA_ASPECT = 4f / 3f   // width : height of the viewfinder
 
 private val Green = Color(0xFF4CC38A)
@@ -226,23 +237,31 @@ private fun Header(ui: UiState, tab: Int, onSelectTab: (Int) -> Unit, onClearTas
                     Icon(Icons.Filled.Close, contentDescription = "Clear task", tint = muted, modifier = Modifier.size(20.dp))
                 }
             }
+            IconButton(onClick = onToggleMic, modifier = Modifier.size(40.dp)) {
+                Icon(if (ui.micMuted) Icons.Filled.MicOff else Icons.Filled.Mic, contentDescription = "Mute microphone",
+                    tint = if (ui.micMuted) MaterialTheme.colorScheme.error else muted, modifier = Modifier.size(22.dp))
+            }
+            IconButton(onClick = onToggleDeafen, modifier = Modifier.size(40.dp)) {
+                Icon(if (ui.deafened) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = "Mute agent voice",
+                    tint = if (ui.deafened) MaterialTheme.colorScheme.error else muted, modifier = Modifier.size(22.dp))
+            }
             val latency = ui.messages.lastOrNull { it.role == "agent" && it.latencyMs != null }?.latencyMs
-            val bits = listOfNotNull(ui.rttMs?.let { "$it ms" }, latency?.let { "vlm $it ms" }, ui.phase)
+            val bits = listOfNotNull(ui.rttMs?.let { "$it ms" }, latency?.let { "vlm $it ms" },
+                ui.phase.takeIf { it != "idle" })
             Text(bits.joinToString(" · "), style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace,
                 color = muted, maxLines = 1)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            TABS.forEachIndexed { i, t ->
+            TAB_ICONS.forEachIndexed { i, (icon, label) ->
                 val on = i == tab
-                Text(t, style = MaterialTheme.typography.labelLarge,
-                    color = if (on) MaterialTheme.colorScheme.onSecondaryContainer else muted,
-                    modifier = Modifier.clip(RoundedCornerShape(16.dp))
-                        .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)
-                        .clickable { onSelectTab(i) }.padding(horizontal = 12.dp, vertical = 6.dp))
+                IconButton(onClick = { onSelectTab(i) }, modifier = Modifier.size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (on) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent)) {
+                    Icon(icon, contentDescription = label, modifier = Modifier.size(22.dp),
+                        tint = if (on) MaterialTheme.colorScheme.onSecondaryContainer else muted)
+                }
             }
-            Spacer(Modifier.weight(1f))
-            ToggleChip("mic", active = !ui.micMuted, onClick = onToggleMic)        // filled = on
-            ToggleChip("voice", active = !ui.deafened, onClick = onToggleDeafen)
         }
     }
 }
@@ -422,15 +441,3 @@ private fun ZoomDialog(url: String, onClose: () -> Unit) {
     }
 }
 
-
-/** Small on/off pill: dimmed + outlined when off. */
-@Composable
-private fun ToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
-    val bg = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
-    val fg = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Text(label, style = MaterialTheme.typography.labelMedium, color = fg, maxLines = 1, softWrap = false,
-        textDecoration = if (active) null else androidx.compose.ui.text.style.TextDecoration.LineThrough,
-        modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(bg)
-            .then(if (active) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)))
-            .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 5.dp))
-}
