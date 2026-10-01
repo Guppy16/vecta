@@ -83,6 +83,12 @@ class Listener:
         self._voiced_ms = 0
         self._silence_ms = 0
 
+    async def mute_for(self, seconds: float) -> None:
+        """The agent is about to speak: finish what the user was saying, ignore the rest."""
+        self.muted_until = time.time() + seconds
+        if self._utterance:
+            await self._flush()
+
     async def run(self, track: MediaStreamTrack) -> None:
         try:
             while True:
@@ -113,7 +119,7 @@ class Listener:
         self._utterance, self._voiced_ms, self._silence_ms = bytearray(), 0, 0
         if voiced < MIN_UTTERANCE_MS:
             return  # a click, a cough
-        if started < self.muted_until:
+        if started > self.muted_until - 0.5 and started < self.muted_until:
             return  # that was us talking
         try:
             text = await self._stt.transcribe(pcm)

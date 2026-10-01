@@ -30,6 +30,9 @@ class TtsPlayer(context: Context) {
             @Suppress("DEPRECATION")
             audioManager.isSpeakerphoneOn = true
         }
+        // our track plays on the voice-call stream, whose speaker volume is often left low
+        val stream = AudioManager.STREAM_VOICE_CALL
+        audioManager.setStreamVolume(stream, audioManager.getStreamMaxVolume(stream), 0)
     }
 
     private val track = AudioTrack.Builder()

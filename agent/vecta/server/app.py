@@ -215,7 +215,7 @@ async def say(session_id: str, request: Request) -> dict:
             chunks = await tts.chunks(text)
             seconds = sum(len(c.data) for c in chunks) * 3 / 4 / (16000 * 2)  # base64 -> PCM16 @16k
             if lv.listener:  # don't transcribe our own voice coming back through the mic
-                lv.listener.muted_until = time.time() + seconds + 0.5
+                await lv.listener.mute_for(seconds + 0.5)
             for chunk in chunks:
                 lv.peer.send(chunk)
         except Exception as e:

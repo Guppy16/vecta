@@ -155,7 +155,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
         var lastBytes = 0L; var lastT = System.currentTimeMillis()
         while (rtc === client) {
             client.send(Ping(t = System.currentTimeMillis()))
-            client.stats()?.let { s ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { client.stats() }?.let { s ->
                 val now = System.currentTimeMillis()
                 val kbps = (s.bytesSent - lastBytes) * 8.0 / (now - lastT).coerceAtLeast(1)
                 lastBytes = s.bytesSent; lastT = now
