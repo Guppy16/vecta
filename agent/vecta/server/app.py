@@ -141,6 +141,17 @@ async def _talk(lv: Live, text: str) -> None:
             desc = await describe_view(s)
             s.inbox.append("tool", name="look", result=desc)
             reply = await lv.talker.tool_result("look", desc)
+            # fast answer, slow verification: the main agent fact-checks every vision answer
+            # against the real frame and corrects out loud if the talker got it wrong
+            kf_dir = s.dir / "keyframes"
+            frames = sorted(kf_dir.glob("kf_*.jpg")) if kf_dir.is_dir() else []
+            s.inbox.append(
+                "verify",
+                question=text,
+                caption=desc,
+                answer=reply.text,
+                keyframe=str(frames[-1]) if frames else None,
+            )
     except Exception as e:
         log.warning("talker failed: %s", e)
         return
