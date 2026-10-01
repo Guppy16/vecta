@@ -241,8 +241,8 @@ private fun Header(ui: UiState, tab: Int, onSelectTab: (Int) -> Unit, onClearTas
                         .clickable { onSelectTab(i) }.padding(horizontal = 12.dp, vertical = 6.dp))
             }
             Spacer(Modifier.weight(1f))
-            ToggleChip(if (ui.micMuted) "mic off" else "mic on", active = !ui.micMuted, onClick = onToggleMic)
-            ToggleChip(if (ui.deafened) "voice off" else "voice on", active = !ui.deafened, onClick = onToggleDeafen)
+            ToggleChip("mic", active = !ui.micMuted, onClick = onToggleMic)        // filled = on
+            ToggleChip("voice", active = !ui.deafened, onClick = onToggleDeafen)
         }
     }
 }
@@ -428,7 +428,8 @@ private fun ZoomDialog(url: String, onClose: () -> Unit) {
 private fun ToggleChip(label: String, active: Boolean, onClick: () -> Unit) {
     val bg = if (active) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     val fg = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Text(label, style = MaterialTheme.typography.labelMedium, color = fg,
+    Text(label, style = MaterialTheme.typography.labelMedium, color = fg, maxLines = 1, softWrap = false,
+        textDecoration = if (active) null else androidx.compose.ui.text.style.TextDecoration.LineThrough,
         modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(bg)
             .then(if (active) Modifier else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(14.dp)))
             .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 5.dp))
