@@ -1,28 +1,33 @@
-"""HTTP entrypoint: WebRTC signalling, asset serving, and the message handler.
+"""HTTP entrypoint: WebRTC signalling, assets, the message handler, and the
+agent-facing endpoints the `vecta` CLI talks to.
 
-Until the Claude agent layer lands, the handler is a local VLM watch: set a
-task and the box tells you when the camera sees it; ask a question and it
-answers from recent frames.
+Phone -> server events land in the session inbox (the agent tails it); the
+agent answers through /sessions/{id}/say, /mark, /watch, /page, /send.
 """
 
 from __future__ import annotations
 
-import io
+import json
 import logging
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import uvicorn
 from aiortc import RTCSessionDescription
+from aiortc.mediastreams import MediaStreamTrack
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from vecta.protocol import messages as m
-from vecta.server.frames import Frame
+from vecta.server.audio import Listener, Transcriber
+from vecta.server.ground import MarkerSpec, MarkerTracker
+from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
-from vecta.server.sessions import SessionStore
+from vecta.server.sessions import Session, SessionStore
+from vecta.server.speech import Speaker
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -43,8 +48,30 @@ settings = Settings()
 app = FastAPI(title="vecta")
 store = SessionStore(settings.data_dir)
 vlm = Vlm()
-peers: dict[str, Peer] = {}
-watchers: dict[str, Watcher] = {}
+stt = Transcriber()
+tts = Speaker()
+
+
+@dataclass
+class Live:
+    """Everything running for one connected phone."""
+
+    peer: Peer
+    keyframer: Keyframer
+    markers: MarkerTracker
+    watcher: Watcher | None = None
+
+
+live: dict[str, Live] = {}
+
+
+def _live(session_id: str) -> Live:
+    if (lv := live.get(session_id)) is None:
+        raise HTTPException(404, f"no live session {session_id}")
+    return lv
+
+
+# --- phone side ----------------------------------------------------------------------
 
 
 @app.get("/ping")
@@ -58,57 +85,52 @@ async def rtc_offer(request: Request) -> dict[str, str]:
     body = await request.json()
     base_url = f"{request.url.scheme}://{request.headers['host']}"
     session = store.get_or_create(body.get("session_id"), base_url)
-    if old := peers.pop(session.id, None):
-        await old.close()
-    peer = Peer(session, handle, on_close=lambda p: _cleanup(p.session.id))
-    peers[session.id] = peer
+    if old := live.pop(session.id, None):
+        await old.peer.close()
+    peer = Peer(
+        session,
+        handle,
+        on_close=lambda p: _on_peer_closed(p.session.id),
+        on_audio=lambda track: _listen(session, peer, track),
+    )
+    lv = Live(
+        peer=peer, keyframer=Keyframer(session), markers=MarkerTracker(session, vlm, peer.send)
+    )
+    live[session.id] = lv
+    lv.keyframer.start()
     answer = await peer.answer(RTCSessionDescription(sdp=body["sdp"], type=body["type"]))
+    session.inbox.append("connected")
     return {"sdp": answer.sdp, "type": answer.type, "session_id": session.id}
 
 
-@app.get("/assets/{session_id}/{name}")
-async def asset(session_id: str, name: str) -> FileResponse:
+async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None:
+    def heard(text: str) -> None:
+        session.inbox.append("voice", text=text)
+        peer.send(m.Transcript(text=text))
+
+    await Listener(stt, heard).run(track)
+
+
+def _on_peer_closed(session_id: str) -> None:
+    lv = live.pop(session_id, None)
+    if lv is None:
+        return
+    lv.keyframer.stop()
+    lv.markers.remove(None)
+    if lv.watcher:
+        lv.watcher.stop()
+    lv.peer.session.inbox.append("disconnected")
+
+
+@app.get("/assets/{session_id}/{path:path}")
+async def asset(session_id: str, path: str) -> FileResponse:
     session = store.get(session_id)
-    if session is None or "/" in name or name.startswith("."):
+    if session is None or ".." in path or path.startswith("/"):
         raise HTTPException(404)
-    path = session.dir / name
-    if not path.is_file():
+    file = (session.dir / path).resolve()
+    if not file.is_file() or session.dir.resolve() not in file.parents:
         raise HTTPException(404)
-    return FileResponse(path)
-
-
-@app.get("/debug/sessions")
-async def debug_sessions() -> list[dict]:
-    """What each live session is doing — for poking at from a laptop."""
-    out = []
-    for sid, peer in peers.items():
-        s, w = peer.session, watchers.get(sid)
-        latest = s.frames.latest()
-        out.append(
-            {
-                "session": sid,
-                "connection": peer.pc.connectionState,
-                "task": s.task,
-                "frames_received": s.frames.received,
-                "frames_buffered": len(s.frames),
-                "latest_frame_age_ms": int(time.time() * 1000 - latest.ts_ms) if latest else None,
-                "watching": bool(w and w.running),
-                "last_pick_age_s": round(time.time() - w.last_pick_at, 1)
-                if w and w.last_pick_at
-                else None,
-                "last_verdict": w.last_verdict if w else None,
-            }
-        )
-    return out
-
-
-def _cleanup(session_id: str) -> None:
-    if w := watchers.pop(session_id, None):
-        w.stop()
-    peers.pop(session_id, None)
-
-
-# --- message handler --------------------------------------------------------------
+    return FileResponse(file)
 
 
 async def handle(peer: Peer, msg: m.Message) -> list[m.Message]:
@@ -120,27 +142,11 @@ async def handle(peer: Peer, msg: m.Message) -> list[m.Message]:
             return [m.SessionState(session_id=s.id, task=s.task)]
         case m.TaskSet(text=text):
             s.task = text
-            watcher = watchers.get(s.id) or Watcher(s, vlm, peer.send)
-            watchers[s.id] = watcher
-            watcher.start()
-            return [
-                m.SessionState(session_id=s.id, task=s.task),
-                m.Status(phase="watching", text=text),
-            ]
+            s.inbox.append("task", text=text)
+            return [m.SessionState(session_id=s.id, task=s.task)]
         case m.InputText(text=text):
-            watcher = watchers.get(s.id)
-            frames = watcher.recent_jpegs() if watcher else []
-            if not frames and (latest := s.frames.latest()):
-                frames = [_jpeg(latest)]
-            peer.send(m.Status(phase="thinking"))
-            t0 = time.monotonic()
-            reply = await vlm.answer(text, frames, s.task)
-            return [
-                m.AgentMessage(
-                    text=reply, status="answer", latency_ms=int((time.monotonic() - t0) * 1000)
-                ),
-                m.Status(phase="watching" if watcher and watcher.running else "idle"),
-            ]
+            s.inbox.append("text", text=text)
+            return []
         case m.Capture(kind="photo", id=cid):
             frame = s.frames.latest()
             if frame is None:
@@ -148,19 +154,137 @@ async def handle(peer: Peer, msg: m.Message) -> list[m.Message]:
             path = s.dir / f"capture_{len(s.captures):03d}.jpg"
             frame.to_jpeg(path)
             s.captures.append(path)
-            return [m.CaptureAck(id=cid, frames=len(s.frames), url=s.asset_url(path))]
-        case m.UiEvent(event=event, target=target):
-            log.info("session %s: ui.event %s %s", s.id, event, target)
+            url = s.asset_url(path)
+            s.inbox.append("capture", path=str(path), url=url)
+            return [m.CaptureAck(id=cid, frames=len(s.frames), url=url)]
+        case m.UiEvent(event=event, target=target, data=data):
+            s.inbox.append("ui", event=event, target=target, data=data)
             return []
         case _:
             log.debug("session %s: unhandled %s", s.id, msg.type)
             return []
 
 
-def _jpeg(frame: Frame) -> bytes:
-    buf = io.BytesIO()
-    frame.image.to_image().save(buf, format="JPEG", quality=85)
-    return buf.getvalue()
+# --- agent side (the `vecta` CLI) -------------------------------------------------------
+
+
+@app.get("/sessions")
+async def sessions() -> list[dict]:
+    out = []
+    for sid, lv in live.items():
+        s = lv.peer.session
+        latest = s.frames.latest()
+        out.append(
+            {
+                "session": sid,
+                "connection": lv.peer.pc.connectionState,
+                "task": s.task,
+                "frames_received": s.frames.received,
+                "latest_frame_age_ms": int(time.time() * 1000 - latest.ts_ms) if latest else None,
+                "keyframes": lv.keyframer.count,
+                "markers": list(lv.markers.markers),
+                "watching": bool(lv.watcher and lv.watcher.running),
+                "dir": str(s.dir),
+            }
+        )
+    return out
+
+
+@app.get("/sessions/{session_id}/inbox")
+async def inbox(session_id: str, n: int = 50) -> list[dict]:
+    session = store.get(session_id)
+    if session is None:
+        raise HTTPException(404)
+    return session.inbox.tail(n)
+
+
+@app.post("/sessions/{session_id}/say")
+async def say(session_id: str, request: Request) -> dict:
+    """Message the user; spoken by default."""
+    body = await request.json()
+    lv = _live(session_id)
+    text, speak = body["text"], body.get("speak", True)
+    lv.peer.send(m.AgentMessage(text=text, status=body.get("status", "answer")))
+    lv.peer.session.inbox.append("agent", text=text, spoken=speak)
+    if speak:
+        try:
+            for chunk in await tts.chunks(text):
+                lv.peer.send(chunk)
+        except Exception as e:
+            log.warning("tts failed: %s", e)
+            return {"sent": True, "spoken": False, "error": str(e)}
+    return {"sent": True, "spoken": speak}
+
+
+@app.post("/sessions/{session_id}/mark")
+async def mark(session_id: str, request: Request) -> dict:
+    """Pin a description to the live view until unmarked."""
+    body = await request.json()
+    lv = _live(session_id)
+    spec = MarkerSpec(
+        id=body.get("id") or secrets.token_urlsafe(4),
+        query=body["query"],
+        label=body.get("label", ""),
+        color=body.get("color", "#46C46A"),
+    )
+    lv.markers.set(spec)
+    return {"id": spec.id, "markers": list(lv.markers.markers)}
+
+
+@app.post("/sessions/{session_id}/unmark")
+async def unmark(session_id: str, request: Request) -> dict:
+    body = await request.json()
+    lv = _live(session_id)
+    lv.markers.remove(body.get("id") or None)
+    return {"markers": list(lv.markers.markers)}
+
+
+@app.post("/sessions/{session_id}/watch")
+async def watch(session_id: str, request: Request) -> dict:
+    """Start (or, with empty text, stop) a VLM watch reporting to the inbox and the phone."""
+    body = await request.json()
+    lv = _live(session_id)
+    s = lv.peer.session
+    text = body.get("text", "").strip()
+    if lv.watcher:
+        lv.watcher.stop()
+        lv.watcher = None
+    if not text:
+        lv.peer.send(m.Status(phase="idle"))
+        return {"watching": False}
+    s.task = text
+
+    def report(msg: m.Message) -> None:
+        if isinstance(msg, m.AgentMessage):
+            s.inbox.append("watch", status=msg.status, text=msg.text, url=msg.url)
+        lv.peer.send(msg)
+
+    lv.watcher = Watcher(s, vlm, report)
+    lv.watcher.start()
+    lv.peer.send(m.Status(phase="watching", text=text))
+    return {"watching": True, "text": text}
+
+
+@app.post("/sessions/{session_id}/page")
+async def page(session_id: str, request: Request) -> dict:
+    body = await request.json()
+    lv = _live(session_id)
+    s = lv.peer.session
+    lv.peer.send(m.PageRender(html=body["html"], version=s.next_page_version()))
+    return {"version": s.page_version}
+
+
+@app.post("/sessions/{session_id}/send")
+async def send_raw(session_id: str, request: Request) -> dict:
+    """Send any protocol message verbatim (escape hatch for the CLI)."""
+    body = await request.json()
+    lv = _live(session_id)
+    try:
+        msg = m.decode(json.dumps(body))
+    except m.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
+    lv.peer.send(msg)
+    return {"sent": msg.type}
 
 
 def main() -> None:

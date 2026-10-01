@@ -54,7 +54,7 @@ class Vlm:
 
     async def judge(self, task: str, jpeg: bytes) -> Verdict:
         t0 = time.monotonic()
-        text = await self._chat(
+        text = await self.chat(
             system=f"{JUDGE_SYSTEM}\nTask: {task}",
             user_text="Latest camera frame. Evaluate the task now.",
             jpegs=[jpeg],
@@ -66,9 +66,9 @@ class Vlm:
 
     async def answer(self, question: str, jpegs: list[bytes], task: str | None) -> str:
         system = ANSWER_SYSTEM + (f"\nThe user's standing task is: {task}" if task else "")
-        return (await self._chat(system, question, jpegs, max_tokens=300)).strip()
+        return (await self.chat(system, question, jpegs, max_tokens=300)).strip()
 
-    async def _chat(
+    async def chat(
         self,
         system: str,
         user_text: str,

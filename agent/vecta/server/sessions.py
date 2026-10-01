@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from vecta.server.frames import FrameBuffer
+from vecta.server.inbox import Inbox
 
 
 @dataclass
@@ -18,9 +19,14 @@ class Session:
     frames: FrameBuffer = field(default_factory=FrameBuffer)
     page_version: int = 0
     captures: list[Path] = field(default_factory=list)
+    inbox: Inbox = field(init=False)
 
-    def asset_url(self, path: Path) -> str:
-        return f"{self.base_url}/assets/{self.id}/{path.name}"
+    def __post_init__(self) -> None:
+        self.inbox = Inbox(self.dir / "inbox.jsonl")
+
+    def asset_url(self, path: Path, sub: str = "") -> str:
+        rel = f"{sub}/{path.name}" if sub else path.name
+        return f"{self.base_url}/assets/{self.id}/{rel}"
 
     def next_page_version(self) -> int:
         self.page_version += 1

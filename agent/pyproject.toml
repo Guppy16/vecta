@@ -14,10 +14,12 @@ dependencies = [
     "pillow",
     "python-dotenv",
     "uvicorn[standard]",
+    "webrtcvad-wheels",
 ]
 
 [project.scripts]
 vecta-server = "vecta.server.app:main"
+vecta = "vecta.cli:main"
 
 [project.optional-dependencies]
 # Local GPU jobs. The box has no system ROCm; PyTorch's rocm7.14 wheels bundle

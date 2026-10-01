@@ -26,10 +26,15 @@ class Peer:
     """Wraps an RTCPeerConnection plus the session it feeds."""
 
     def __init__(
-        self, session: Session, handler: Handler, on_close: Callable[[Peer], None] | None = None
+        self,
+        session: Session,
+        handler: Handler,
+        on_close: Callable[[Peer], None] | None = None,
+        on_audio: Callable[[MediaStreamTrack], Awaitable[None]] | None = None,
     ) -> None:
         self.session = session
         self._on_close = on_close
+        self._on_audio = on_audio
         # No STUN/TURN: both ends are on the tailnet with stable addresses, and the
         # default STUN lookups add ~5 s to gathering on multi-interface hosts.
         self.pc = RTCPeerConnection(RTCConfiguration(iceServers=[]))
@@ -62,10 +67,13 @@ class Peer:
     # --- callbacks ---------------------------------------------------------------
 
     def _on_track(self, track: MediaStreamTrack) -> None:
-        if track.kind != "video":
-            return
-        log.info("session %s: video track", self.session.id)
-        task = asyncio.create_task(self._consume(track))
+        log.info("session %s: %s track", self.session.id, track.kind)
+        if track.kind == "audio":
+            if self._on_audio is None:
+                return
+            task = asyncio.create_task(self._on_audio(track))
+        else:
+            task = asyncio.create_task(self._consume(track))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 

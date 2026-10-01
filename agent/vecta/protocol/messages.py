@@ -142,6 +142,50 @@ class AgentMessage(Message):
 
 
 @dataclass
+class Marker(Message):
+    """One thing to highlight on the live view, in normalised image coordinates (0..1)."""
+
+    type: ClassVar[str] = "marker"
+    id: str = ""
+    label: str = ""  # short text drawn next to it ("1", "MODE")
+    x: float = 0.0  # centre
+    y: float = 0.0
+    w: float = 0.0  # box size; 0 = draw as a point
+    h: float = 0.0
+    color: str = "#46C46A"
+
+
+@dataclass
+class OverlaySet(Message):
+    """Full replacement of the markers drawn over the viewfinder."""
+
+    type: ClassVar[str] = "overlay.set"
+    markers: list[dict[str, Any]] = field(default_factory=list)  # Marker fields
+    frame_w: int = 0  # image size the coordinates refer to
+    frame_h: int = 0
+
+
+@dataclass
+class Transcript(Message):
+    """What the server heard on the mic, so the user can see it was understood."""
+
+    type: ClassVar[str] = "transcript"
+    text: str = ""
+    final: bool = True
+
+
+@dataclass
+class TtsChunk(Message):
+    """A chunk of spoken agent audio: 16 kHz mono PCM16, base64; play in order."""
+
+    type: ClassVar[str] = "tts.chunk"
+    id: str = ""
+    seq: int = 0
+    last: bool = False
+    data: str = ""
+
+
+@dataclass
 class Pong(Message):
     type: ClassVar[str] = "pong"
     t: int = 0  # echoed from the ping
