@@ -20,13 +20,14 @@ dependencies = [
 vecta-server = "vecta.server.app:main"
 
 [project.optional-dependencies]
-# Local GPU jobs. The box has no system ROCm; PyTorch's rocm7.2 wheels bundle
+# Local GPU jobs. The box has no system ROCm; PyTorch's rocm7.14 wheels bundle
 # the runtime and only need the amdgpu kernel driver (Strix Halo = gfx1151).
 gpu = [
     "mediapipe",
     "torch",
     "torchvision",
-    "triton-rocm; sys_platform == 'linux'",  # torch's ROCm dep; listed so the index source applies
+    "triton-rocm; sys_platform == 'linux'",  # torch's ROCm deps; listed so the index sources apply
+    "rocm[device-all,libraries]; sys_platform == 'linux'",
     "ultralytics",
 ]
 
@@ -39,16 +40,26 @@ build-backend = "uv_build"
 
 [tool.uv]
 environments = ["sys_platform == 'linux'"]
+# rocm-sdk-* exist on PyPI too (other versions/platforms), which would stop a first-index
+# search before it reaches the ROCm index; best-match looks at both.
+index-strategy = "unsafe-best-match"
 
+# torch and friends are pinned to the ROCm index below. Since ROCm 7.14 the torch wheel
+# depends on rocm[device-all,libraries], which fans out into rocm-sdk-* packages that only
+# exist on that index; they resolve there because PyPI (listed first) doesn't have them.
 [tool.uv.sources]
 torch = { index = "pytorch-rocm" }
 torchvision = { index = "pytorch-rocm" }
 triton-rocm = { index = "pytorch-rocm" }
+rocm = { index = "pytorch-rocm" }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
 
 [[tool.uv.index]]
 name = "pytorch-rocm"
-url = "https://download.pytorch.org/whl/rocm7.2"
-explicit = true
+url = "https://download.pytorch.org/whl/rocm7.14"
 
 [tool.uv.build-backend]
 module-root = ""

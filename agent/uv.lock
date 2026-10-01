@@ -1083,6 +1083,338 @@ wheels = [
 ]
 
 [[package]]
+name = "rocm"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-core" },
+]
+sdist = { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm-7.14.1.tar.gz" }
+
+[package.optional-dependencies]
+device-all = [
+    { name = "rocm-sdk-device-gfx1010" },
+    { name = "rocm-sdk-device-gfx1011" },
+    { name = "rocm-sdk-device-gfx1012" },
+    { name = "rocm-sdk-device-gfx1030" },
+    { name = "rocm-sdk-device-gfx1031" },
+    { name = "rocm-sdk-device-gfx1032" },
+    { name = "rocm-sdk-device-gfx1033" },
+    { name = "rocm-sdk-device-gfx1034" },
+    { name = "rocm-sdk-device-gfx1035" },
+    { name = "rocm-sdk-device-gfx1036" },
+    { name = "rocm-sdk-device-gfx1100" },
+    { name = "rocm-sdk-device-gfx1101" },
+    { name = "rocm-sdk-device-gfx1102" },
+    { name = "rocm-sdk-device-gfx1103" },
+    { name = "rocm-sdk-device-gfx1150" },
+    { name = "rocm-sdk-device-gfx1151" },
+    { name = "rocm-sdk-device-gfx1152" },
+    { name = "rocm-sdk-device-gfx1153" },
+    { name = "rocm-sdk-device-gfx1200" },
+    { name = "rocm-sdk-device-gfx1201" },
+    { name = "rocm-sdk-device-gfx1250" },
+    { name = "rocm-sdk-device-gfx908" },
+    { name = "rocm-sdk-device-gfx90a" },
+    { name = "rocm-sdk-device-gfx942" },
+    { name = "rocm-sdk-device-gfx950" },
+]
+libraries = [
+    { name = "rocm-sdk-libraries" },
+]
+
+[[package]]
+name = "rocm-sdk-core"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_core-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1010"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1010-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1011"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1011-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1012"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1012-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1030"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1030-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1031"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1031-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1032"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1032-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1033"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1033-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1034"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1034-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1035"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1035-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1036"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1036-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1100"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1100-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1101"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1101-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1102"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1102-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1103"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1103-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1150"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1150-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1151"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1151-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1152"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1152-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1153"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1153-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1200"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1200-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1201"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1201-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx1250"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx1250-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx908"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx908-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx90a"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx90a-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx942"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx942-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-device-gfx950"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+dependencies = [
+    { name = "rocm-sdk-libraries" },
+]
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_device_gfx950-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
+name = "rocm-sdk-libraries"
+version = "7.14.1"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
+wheels = [
+    { url = "https://repo.amd.com/rocm/whl-multi-arch/rocm_sdk_libraries-7.14.1-py3-none-linux_x86_64.whl" },
+]
+
+[[package]]
 name = "ruff"
 version = "0.16.9"
 source = { registry = "https://pypi.org/simple" }
@@ -1167,45 +1499,46 @@ wheels = [
 
 [[package]]
 name = "torch"
-version = "2.14.0+rocm7.2"
-source = { registry = "https://download.pytorch.org/whl/rocm7.2" }
+version = "2.14.1+rocm7.14"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
 dependencies = [
     { name = "filelock" },
     { name = "fsspec" },
     { name = "jinja2" },
     { name = "networkx" },
+    { name = "rocm", extra = ["device-all", "libraries"] },
     { name = "setuptools" },
     { name = "sympy" },
     { name = "triton-rocm", marker = "python_full_version < '3.15'" },
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.14.0%2Brocm7.2-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:f7aadb16d9e480fbaf84a55cb53aa4f55778130c3ddf3e5bc474db478bcd57d7", upload-time = "2026-09-02T23:21:32Z" },
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.14.0%2Brocm7.2-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:efd64cb0282019ccc5834a0b34742293763c5a415fde40976ebce729c234c6e4", upload-time = "2026-09-02T23:27:58Z" },
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.14.0%2Brocm7.2-cp315-cp315-manylinux_2_28_x86_64.whl", hash = "sha256:5ee2b732acb76ff5877cf906e7caa1992db84dfe3e0fbc04ce7377f1b815eb26", upload-time = "2026-09-02T23:30:25Z" },
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torch-2.14.0%2Brocm7.2-cp315-cp315t-manylinux_2_28_x86_64.whl", hash = "sha256:744da97fe1ff49448deb0729e2d9a9a4e9dc78a75ce921f27e40eb5f4d584862", upload-time = "2026-09-02T23:32:51Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torch-2.14.1%2Brocm7.14-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:2c1348b3d16d04a05841b46a714acd989eca49ec65554567431f80f2d3a7e05c", upload-time = "2026-09-30T21:29:38Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torch-2.14.1%2Brocm7.14-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:193f2d9e17233790ea4f99d34784562709ea7975d2bd786b36543e15ec4933a4", upload-time = "2026-09-30T21:30:47Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torch-2.14.1%2Brocm7.14-cp315-cp315-manylinux_2_28_x86_64.whl", hash = "sha256:8e82418fcecdb6aee5f2ca133fc467c9dd1a744d0250223fed9ff237cfa2c763", upload-time = "2026-09-30T21:32:05Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torch-2.14.1%2Brocm7.14-cp315-cp315t-manylinux_2_28_x86_64.whl", hash = "sha256:298659c3de41db8e702bec7674cf48ada8efa32f70eb921f08acb10731293e12", upload-time = "2026-09-30T21:33:23Z" },
 ]
 
 [[package]]
 name = "torchvision"
-version = "0.29.0+rocm7.2"
-source = { registry = "https://download.pytorch.org/whl/rocm7.2" }
+version = "0.29.1+rocm7.14"
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
 dependencies = [
     { name = "numpy" },
     { name = "pillow" },
     { name = "torch" },
 ]
 wheels = [
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchvision-0.29.0%2Brocm7.2-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:0deb52c9e43e866cd0362f3b8fda8fb47a36884664337a66a46ffef7562cbba1", upload-time = "2026-09-02T00:28:26Z" },
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchvision-0.29.0%2Brocm7.2-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:1f63cbf86832c3a8e32cd5894f3985b9adca5c8e30bbcde876ae9cb1ee6df1b6", upload-time = "2026-09-02T00:28:26Z" },
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchvision-0.29.0%2Brocm7.2-cp315-cp315-manylinux_2_28_x86_64.whl", hash = "sha256:78084594c2a6d84d2af727ec58771abec1c360f601bb69df40f3b059274e4fbc", upload-time = "2026-09-02T00:28:27Z" },
-    { url = "https://download-r2.pytorch.org/whl/rocm7.2/torchvision-0.29.0%2Brocm7.2-cp315-cp315t-manylinux_2_28_x86_64.whl", hash = "sha256:bc027b43929a8b6fea5947349b177f5e5a342001eca2ee9282591b0823bf31b0", upload-time = "2026-09-02T00:28:27Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torchvision-0.29.1%2Brocm7.14-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:4c2a2ba7c5ee3330c08c97d52880f137fb35dff4ef2ea1d6546fa07cc7217afb", upload-time = "2026-09-30T15:46:43Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torchvision-0.29.1%2Brocm7.14-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:a679cd4b11997664240abb874c8e0d158fdb3e2c562f87558a6fadfc6443f087", upload-time = "2026-09-30T15:46:43Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torchvision-0.29.1%2Brocm7.14-cp315-cp315-manylinux_2_28_x86_64.whl", hash = "sha256:7daa154c038303396390600abda251cbc451ee4eae6e170422d7c18dd5433595", upload-time = "2026-09-30T15:46:43Z" },
+    { url = "https://download-r2.pytorch.org/whl/rocm7.14/torchvision-0.29.1%2Brocm7.14-cp315-cp315t-manylinux_2_28_x86_64.whl", hash = "sha256:6a5aa18654d805b0d8ea1adb3f3fa660793d5723930edf3f14b845c351dab6a5", upload-time = "2026-09-30T15:46:43Z" },
 ]
 
 [[package]]
 name = "triton-rocm"
 version = "3.8.0"
-source = { registry = "https://download.pytorch.org/whl/rocm7.2" }
+source = { registry = "https://download.pytorch.org/whl/rocm7.14" }
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/triton_rocm-3.8.0-cp314-cp314-linux_x86_64.whl", hash = "sha256:bb278907044d2d71b264d4eba205fbea1df8dcf051d37b4b34435a704971d995", upload-time = "2026-09-02T00:56:03Z" },
     { url = "https://download-r2.pytorch.org/whl/triton_rocm-3.8.0-cp314-cp314t-linux_x86_64.whl", hash = "sha256:c6179f3ebecb30a7211e154ded82968b62d762742d5ac33b68f39e335744c3cc", upload-time = "2026-09-02T00:56:15Z" },
@@ -1362,6 +1695,7 @@ dependencies = [
 [package.optional-dependencies]
 gpu = [
     { name = "mediapipe" },
+    { name = "rocm", extra = ["device-all", "libraries"] },
     { name = "torch" },
     { name = "torchvision" },
     { name = "triton-rocm" },
@@ -1387,9 +1721,10 @@ requires-dist = [
     { name = "opencv-contrib-python" },
     { name = "pillow" },
     { name = "python-dotenv" },
-    { name = "torch", marker = "extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.2" },
-    { name = "torchvision", marker = "extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.2" },
-    { name = "triton-rocm", marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.2" },
+    { name = "rocm", extras = ["device-all", "libraries"], marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.14" },
+    { name = "torch", marker = "extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.14" },
+    { name = "torchvision", marker = "extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.14" },
+    { name = "triton-rocm", marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/rocm7.14" },
     { name = "ultralytics", marker = "extra == 'gpu'" },
     { name = "uvicorn", extras = ["standard"] },
 ]
