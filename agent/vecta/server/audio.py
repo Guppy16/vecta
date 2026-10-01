@@ -30,7 +30,8 @@ FRAME_BYTES = RATE * FRAME_MS // 1000 * 2  # PCM16 mono
 MIN_UTTERANCE_MS = 400
 END_SILENCE_MS = 600
 MAX_UTTERANCE_MS = 15000
-NON_SPEECH = re.compile(r"^\s*(\[[^\]]*\]|\([^)]*\)|[\s.\-]+)\s*$")  # [BLANK_AUDIO], [typing], (music), "-"
+# Whisper's non-speech tokens: [BLANK_AUDIO], [typing], (music), or just punctuation.
+NON_SPEECH = re.compile(r"^\s*(\[[^\]]*\]|\([^)]*\)|[\s.\-]+)\s*$")
 
 
 class Transcriber:
