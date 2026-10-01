@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from vecta.server.frames import FrameBuffer
 from vecta.server.inbox import Inbox
+
+_SAFE_ID = re.compile(r"[A-Za-z0-9_-]{6,32}")
 
 
 @dataclass
@@ -38,8 +41,8 @@ class SessionStore:
         self._data_dir = data_dir
         self._sessions: dict[str, Session] = {}
 
-    def create(self, base_url: str) -> Session:
-        sid = secrets.token_urlsafe(8)
+    def create(self, base_url: str, sid: str | None = None) -> Session:
+        sid = sid or secrets.token_urlsafe(8)
         session_dir = self._data_dir / "sessions" / sid
         session_dir.mkdir(parents=True, exist_ok=True)
         session = Session(id=sid, dir=session_dir, base_url=base_url)
@@ -50,6 +53,10 @@ class SessionStore:
         return self._sessions.get(sid)
 
     def get_or_create(self, sid: str | None, base_url: str) -> Session:
+        """Resume by id; an unknown but well-formed id (e.g. after a server restart)
+        is re-created in place so the phone keeps its identity and its folder."""
         if sid and (existing := self.get(sid)):
             return existing
+        if sid and _SAFE_ID.fullmatch(sid):
+            return self.create(base_url, sid)
         return self.create(base_url)

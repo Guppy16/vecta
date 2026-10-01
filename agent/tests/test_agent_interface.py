@@ -65,3 +65,13 @@ def test_new_message_types_round_trip() -> None:
         m.Marker(id="a", label="1", x=0.2, y=0.3),
     ):
         assert m.decode(m.encode(msg)) == msg
+
+
+def test_session_store_resumes_unknown_but_valid_id(tmp_path: Path) -> None:
+    from vecta.server.sessions import SessionStore
+
+    store = SessionStore(tmp_path)
+    a = store.get_or_create("abc123-XYZ", "http://x")
+    assert a.id == "abc123-XYZ" and a.dir.name == "abc123-XYZ"
+    assert store.get_or_create("abc123-XYZ", "http://x") is a
+    assert store.get_or_create("../evil", "http://x").id != "../evil"  # bad ids get a fresh one
