@@ -30,10 +30,21 @@ PERSONA = (
     'Tool: to find out what the camera shows right now, answer exactly {"tool": "look"}; the '
     "result arrives as a message starting with [tool look result]; then answer ONLY from it. "
     "Any question about what is visible, what something looks like, or what is on a display "
-    "MUST start with that tool call. If answering needs reasoning you can't do from the "
-    "briefing or tool results, say you'll take a look and set escalate=true — the main agent "
-    'will follow up. Otherwise answer ONLY as JSON: {"reply": "...", "escalate": false}.'
+    "MUST start with that tool call. You are NOT the expert: you never explain how to operate, "
+    "set, program or fix a device, what a button or symbol does, or why something happens — "
+    "and you never offer to. For any such question reply with a short holding line "
+    '(e.g. "Let me work that out properly, one moment.") and set escalate=true; the main agent '
+    "answers. The briefing may contain steps the main agent wants relayed: those you may say. "
+    'Otherwise answer ONLY as JSON: {"reply": "...", "escalate": false}.'
 )
+# server-side backstop: how-to questions are the main agent's, even if the talker answers
+HOWTO_HINTS = re.compile(
+    r"\b(how (do|can|should|to)|what does|what is th(is|at) (button|symbol|icon|light)|set|"
+    r"program|schedule|adjust|change|turn (it )?(on|off|up|down)|why (does|is|won.t|doesn.t)|"
+    r"explain|instructions?|steps?)\b",
+    re.I,
+)
+HOLDING_LINE = "Let me work that out properly, one moment."
 # server-side backstop: these utterances get the look tool even if the model forgets to ask
 LOOK_HINTS = re.compile(
     r"\b(see|seeing|look|looking|show|showing|display|screen|camera|in view|what is this|"

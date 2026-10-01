@@ -119,3 +119,14 @@ def test_tts_track_paces_and_fills_silence() -> None:
         assert f2.pts == SAMPLES
 
     asyncio.run(main())
+
+
+def test_howto_and_look_hints() -> None:
+    from vecta.server.talker import HOWTO_HINTS, LOOK_HINTS
+
+    assert HOWTO_HINTS.search("how do I set the temperature")
+    assert HOWTO_HINTS.search("what does this button do")
+    assert HOWTO_HINTS.search("can you explain it")
+    assert not HOWTO_HINTS.search("hello there")
+    assert LOOK_HINTS.search("do you see the thermostat now?")
+    assert not LOOK_HINTS.search("thanks")

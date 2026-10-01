@@ -32,7 +32,7 @@ from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, earcon
-from vecta.server.talker import LOOK_HINTS, Talker
+from vecta.server.talker import HOLDING_LINE, HOWTO_HINTS, LOOK_HINTS, Reply, Talker
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -144,8 +144,13 @@ async def _talk(lv: Live, text: str) -> None:
     except Exception as e:
         log.warning("talker failed: %s", e)
         return
+    # how-to questions belong to the main agent: force the escalation and don't let the
+    # talker improvise an answer, whatever it said
+    if not reply.escalate and HOWTO_HINTS.search(text) and not reply.tool:
+        reply = Reply(HOLDING_LINE, True, reply.latency_ms)
+        lv.talker.said(HOLDING_LINE)
     if reply.escalate:
-        s.inbox.append("escalate", text=text)
+        s.inbox.append("escalate", text=text, context=lv.talker.history[-6:])
         lv.peer.send(m.Status(phase="thinking"))
     if reply.text:
         s.inbox.append("agent", text=reply.text, by="talker", latency_ms=reply.latency_ms)
