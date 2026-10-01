@@ -7,12 +7,13 @@ agent answers through /sessions/{id}/say, /mark, /watch, /page, /send.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import uvicorn
@@ -28,6 +29,7 @@ from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, earcon
+from vecta.server.talker import Talker
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -43,6 +45,7 @@ class Settings:
         os.environ.get("VECTA_DATA_DIR", Path(__file__).resolve().parents[3] / "data")
     )
     earcons: bool = os.environ.get("VECTA_EARCONS", "1") != "0"
+    talker: bool = os.environ.get("VECTA_TALKER", "1") != "0"  # fast local voice replies
 
 
 settings = Settings()
@@ -62,6 +65,7 @@ class Live:
     markers: MarkerTracker
     watcher: Watcher | None = None
     listener: Listener | None = None
+    talker: Talker = field(default_factory=Talker)
 
 
 live: dict[str, Live] = {}
@@ -110,12 +114,47 @@ async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None
         session.inbox.append("voice", text=text, started_at=round(started_at, 3))
         peer.send(m.Transcript(text=text))
         if settings.earcons:
-            peer.send(earcon("heard"))  # instant "got that" while the agent composes a reply
+            peer.send(earcon("heard"))  # instant "got that" while a reply is composed
+        if settings.talker and (lv := live.get(session.id)):
+            asyncio.create_task(_talk(lv, text))
 
     listener = Listener(stt, heard)
     if lv := live.get(session.id):
         lv.listener = listener
     await listener.run(track)
+
+
+async def _talk(lv: Live, text: str) -> None:
+    """Fast loop: let the talker answer (or stay quiet); escalate to the main agent if asked."""
+    s = lv.peer.session
+    try:
+        reply = await lv.talker.turn(text)
+    except Exception as e:
+        log.warning("talker failed: %s", e)
+        return
+    if reply.escalate:
+        s.inbox.append("escalate", text=text)
+        lv.peer.send(m.Status(phase="thinking"))
+    if reply.text:
+        s.inbox.append("agent", text=reply.text, by="talker", latency_ms=reply.latency_ms)
+        await _speak(lv, reply.text, status="answer", latency_ms=reply.latency_ms)
+
+
+async def _speak(
+    lv: Live, text: str, status: str = "answer", latency_ms: int | None = None
+) -> bool:
+    lv.peer.send(m.AgentMessage(text=text, status=status, latency_ms=latency_ms))
+    try:
+        chunks = await tts.chunks(text)
+    except Exception as e:
+        log.warning("tts failed: %s", e)
+        return False
+    seconds = sum(len(c.data) for c in chunks) * 3 / 4 / (16000 * 2)  # base64 -> PCM16 @16k
+    if lv.listener:  # don't transcribe our own voice coming back through the mic
+        await lv.listener.mute_for(seconds + 0.5)
+    for chunk in chunks:
+        lv.peer.send(chunk)
+    return True
 
 
 def _on_peer_closed(peer: Peer) -> None:
@@ -208,24 +247,28 @@ async def inbox(session_id: str, n: int = 50) -> list[dict]:
 
 @app.post("/sessions/{session_id}/say")
 async def say(session_id: str, request: Request) -> dict:
-    """Message the user; spoken by default."""
+    """The main agent messages the user; spoken by default. The talker hears it too."""
     body = await request.json()
     lv = _live(session_id)
     text, speak = body["text"], body.get("speak", True)
-    lv.peer.send(m.AgentMessage(text=text, status=body.get("status", "answer")))
-    lv.peer.session.inbox.append("agent", text=text, spoken=speak)
-    if speak:
-        try:
-            chunks = await tts.chunks(text)
-            seconds = sum(len(c.data) for c in chunks) * 3 / 4 / (16000 * 2)  # base64 -> PCM16 @16k
-            if lv.listener:  # don't transcribe our own voice coming back through the mic
-                await lv.listener.mute_for(seconds + 0.5)
-            for chunk in chunks:
-                lv.peer.send(chunk)
-        except Exception as e:
-            log.warning("tts failed: %s", e)
-            return {"sent": True, "spoken": False, "error": str(e)}
-    return {"sent": True, "spoken": speak}
+    lv.peer.session.inbox.append("agent", text=text, by="main", spoken=speak)
+    lv.talker.said(text)
+    if not speak:
+        lv.peer.send(m.AgentMessage(text=text, status=body.get("status", "answer")))
+        return {"sent": True, "spoken": False}
+    spoken = await _speak(lv, text, status=body.get("status", "answer"))
+    lv.peer.send(m.Status(phase="idle"))
+    return {"sent": True, "spoken": spoken}
+
+
+@app.post("/sessions/{session_id}/brief")
+async def brief(session_id: str, request: Request) -> dict:
+    """Update what the talker knows (the main agent's current understanding and intent)."""
+    body = await request.json()
+    lv = _live(session_id)
+    lv.talker.briefing = body["text"]
+    lv.peer.session.inbox.append("brief", text=body["text"])
+    return {"briefing": lv.talker.briefing}
 
 
 @app.post("/sessions/{session_id}/task")

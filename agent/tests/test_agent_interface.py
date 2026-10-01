@@ -85,3 +85,17 @@ def test_earcon_is_short_valid_pcm() -> None:
     chunk = earcon("heard")
     pcm = np.frombuffer(base64.b64decode(chunk.data), dtype=np.int16)
     assert 0.1 < len(pcm) / 16000 < 0.2 and abs(pcm).max() < 16000 and chunk.last
+
+
+def test_talker_history_and_parse() -> None:
+    from vecta.server.talker import HISTORY_TURNS, Talker, parse_reply
+
+    assert parse_reply('{"reply": "Yes.", "escalate": false}') == ("Yes.", False)
+    assert parse_reply('```json\n{"reply": "", "escalate": true}\n```') == ("", True)
+    assert parse_reply("plain text") == ("plain text", False)
+    t = Talker()
+    t.said("Hold it steady.")
+    for i in range(HISTORY_TURNS + 5):
+        t.heard(f"u{i}")
+    assert len(t.history) == HISTORY_TURNS and t.history[-1]["content"] == f"u{HISTORY_TURNS + 4}"
+    assert "BRIEFING" in t._system()
