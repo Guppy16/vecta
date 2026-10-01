@@ -81,7 +81,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
     private var rtc: RtcClient? = null
-    private val tts = TtsPlayer()
+    private val tts = TtsPlayer(app)
     private var nextId = 1L
 
     init { viewModelScope.launch { connectLoop() } }
