@@ -22,15 +22,23 @@ log = logging.getLogger(__name__)
 
 PERSONA = (
     "You are Vecta's voice: a terse spoken assistant on the user's phone, helping with a "
-    "task in front of the camera. You know only the BRIEFING and the dialogue. Reply in one or "
-    "two short spoken sentences. Reply with an empty string when the user is not talking to you "
-    "(background conversation, noise, half sentences). If answering needs looking at the camera, "
-    "or reasoning you can't do from the briefing, say you'll take a look and set escalate=true "
-    "— the main agent will follow up. Never invent device details. "
-    "You have one tool: if the user asks what the camera sees right now, or whether something "
-    'is in view, reply with {"tool": "look"} and nothing else; you will get a description '
-    "of the current camera frame as a tool result, then answer from it. "
-    'Otherwise answer ONLY as JSON: {"reply": "...", "escalate": false}.'
+    "task in front of the camera. You CANNOT see. You know only the BRIEFING, the dialogue, "
+    "and tool results; you have no idea what the device looks like unless a tool result or the "
+    "briefing says so — never describe or invent device details, readings or labels. "
+    "Reply in one or two short spoken sentences. Reply with an empty string when the user is "
+    "not talking to you (background conversation, noise, half sentences). "
+    'Tool: to find out what the camera shows right now, answer exactly {"tool": "look"}; the '
+    "result arrives as a message starting with [tool look result]; then answer ONLY from it. "
+    "Any question about what is visible, what something looks like, or what is on a display "
+    "MUST start with that tool call. If answering needs reasoning you can't do from the "
+    "briefing or tool results, say you'll take a look and set escalate=true — the main agent "
+    'will follow up. Otherwise answer ONLY as JSON: {"reply": "...", "escalate": false}.'
+)
+# server-side backstop: these utterances get the look tool even if the model forgets to ask
+LOOK_HINTS = re.compile(
+    r"\b(see|seeing|look|looking|show|showing|display|screen|camera|in view|what is this|"
+    r"what's this|read|reading|says|label)\b",
+    re.I,
 )
 HISTORY_TURNS = 24
 
@@ -75,7 +83,7 @@ class Talker:
         kwargs: dict = {
             "model": self.model,
             "messages": [{"role": "system", "content": self._system()}, *self.history],
-            "temperature": 0.2,
+            "temperature": 0.0,
             "max_tokens": 80,
             "response_format": {"type": "json_object"},
             "extra_body": {"cache_prompt": True},  # the prefix is append-only; llama.cpp reuses it

@@ -32,7 +32,7 @@ from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, earcon
-from vecta.server.talker import Talker
+from vecta.server.talker import LOOK_HINTS, Talker
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -95,6 +95,10 @@ async def rtc_offer(request: Request) -> dict[str, str]:
     base_url = f"{request.url.scheme}://{request.headers['host']}"
     session = store.get_or_create(body.get("session_id"), base_url)
     if old := live.pop(session.id, None):
+        old.keyframer.stop()
+        old.markers.remove(None)
+        if old.watcher:
+            old.watcher.stop()
         await old.peer.close()
     peer = Peer(
         session,
@@ -132,7 +136,8 @@ async def _talk(lv: Live, text: str) -> None:
     s = lv.peer.session
     try:
         reply = await lv.talker.turn(text)
-        if reply.tool == "look":  # the talker's one tool: describe the current frame
+        wants_look = reply.tool == "look" or (not reply.tool and LOOK_HINTS.search(text))
+        if wants_look:  # the talker's one tool: describe the current frame
             desc = await describe_view(s)
             s.inbox.append("tool", name="look", result=desc)
             reply = await lv.talker.tool_result("look", desc)

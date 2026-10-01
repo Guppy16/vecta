@@ -30,6 +30,7 @@ class Keyframer:
 
     def start(self) -> None:
         self.dir.mkdir(exist_ok=True)
+        self.count = len(list(self.dir.glob("kf_*.jpg")))  # continue numbering after a restart
         self._task = asyncio.create_task(self._run(), name=f"keyframes-{self.session.id}")
 
     def stop(self) -> None:
