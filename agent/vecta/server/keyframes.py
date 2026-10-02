@@ -6,8 +6,6 @@ inbox, so the agent gets a scan of a device without the user tapping the
 shutter, and nothing seen during a session is lost.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time

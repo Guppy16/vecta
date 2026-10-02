@@ -6,8 +6,6 @@ on screen when the user tapped") and so later tiers can pull short clips
 without asking the user to rescan.
 """
 
-from __future__ import annotations
-
 import time
 from collections import deque
 from dataclasses import dataclass

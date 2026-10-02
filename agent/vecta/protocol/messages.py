@@ -9,8 +9,6 @@ The Kotlin side mirrors these shapes in `transport/Messages.kt`. Keep the two
 in sync when changing anything here.
 """
 
-from __future__ import annotations
-
 import json
 from dataclasses import asdict, dataclass, field, fields
 from typing import Any, ClassVar

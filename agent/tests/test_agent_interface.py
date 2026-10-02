@@ -1,13 +1,35 @@
+import asyncio
+import base64
 import json
+import struct
 from pathlib import Path
 
 import numpy as np
 import pytest
+from av import AudioResampler
 
 from vecta.protocol import messages as m
+from vecta.server.audio import FRAME_BYTES, FRAME_MS, Listener
 from vecta.server.ground import parse_box
 from vecta.server.inbox import Inbox
-from vecta.server.speech import _wav_to_pcm16
+from vecta.server.sessions import SessionStore
+from vecta.server.speech import (
+    PhraseSplitter,
+    _rate,
+    _resample,
+    _trim_silence,
+    _wav_to_pcm16,
+    earcon,
+)
+from vecta.server.talker import (
+    HISTORY_TURNS,
+    HOWTO_HINTS,
+    LOOK_HINTS,
+    ReplyExtractor,
+    Talker,
+    parse_reply,
+)
+from vecta.server.tts_track import SAMPLES, TtsTrack
 
 
 def test_inbox_append_and_tail(tmp_path: Path) -> None:
@@ -33,8 +55,6 @@ def test_parse_box_qwen_grid() -> None:
 
 def test_wav_to_pcm16_resamples_float_wav() -> None:
     """A WAVE_FORMAT_IEEE_FLOAT file like Kokoro's (wave.open rejects these)."""
-    import struct
-
     rate, seconds = 24000, 0.5
     t = np.arange(int(rate * seconds)) / rate
     data = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float32).tobytes()
@@ -68,8 +88,6 @@ def test_new_message_types_round_trip() -> None:
 
 
 def test_session_store_resumes_unknown_but_valid_id(tmp_path: Path) -> None:
-    from vecta.server.sessions import SessionStore
-
     store = SessionStore(tmp_path)
     a = store.get_or_create("abc123-XYZ", "http://x")
     assert a.id == "abc123-XYZ" and a.dir.name == "abc123-XYZ"
@@ -78,18 +96,12 @@ def test_session_store_resumes_unknown_but_valid_id(tmp_path: Path) -> None:
 
 
 def test_earcon_is_short_valid_pcm() -> None:
-    import base64
-
-    from vecta.server.speech import earcon
-
     chunk = earcon("heard")
     pcm = np.frombuffer(base64.b64decode(chunk.data), dtype=np.int16)
     assert 0.1 < len(pcm) / 16000 < 0.2 and abs(pcm).max() < 16000 and chunk.last
 
 
 def test_talker_history_and_parse() -> None:
-    from vecta.server.talker import HISTORY_TURNS, Talker, parse_reply
-
     assert parse_reply('{"reply": "Yes.", "escalate": false}') == ("Yes.", False, None)
     assert parse_reply('```json\n{"reply": "", "escalate": true}\n```') == ("", True, None)
     assert parse_reply('{"tool": "look"}') == ("", False, "look")
@@ -103,10 +115,6 @@ def test_talker_history_and_parse() -> None:
 
 
 def test_tts_track_paces_and_fills_silence() -> None:
-    import asyncio
-
-    from vecta.server.tts_track import SAMPLES, TtsTrack
-
     async def main() -> None:
         t = TtsTrack()
         t.enqueue(b"\x01\x00" * (SAMPLES + 10))  # 1.03 frames of audio
@@ -122,11 +130,119 @@ def test_tts_track_paces_and_fills_silence() -> None:
 
 
 def test_howto_and_look_hints() -> None:
-    from vecta.server.talker import HOWTO_HINTS, LOOK_HINTS
-
     assert HOWTO_HINTS.search("how do I set the temperature")
     assert HOWTO_HINTS.search("what does this button do")
     assert HOWTO_HINTS.search("can you explain it")
     assert not HOWTO_HINTS.search("hello there")
     assert LOOK_HINTS.search("do you see the thermostat now?")
     assert not LOOK_HINTS.search("thanks")
+
+
+def test_reply_extractor_streams_reply_text():
+    raw = '{"reply": "It says \\"003\\", not a\\u00b0 temp.\\nOk", "escalate": false}'
+    x, out = ReplyExtractor(), []
+    for i in range(0, len(raw), 3):  # deltas cut anywhere, including inside escapes
+        out.append(x.feed(raw[i : i + 3]))
+    assert "".join(out) == 'It says "003", not a° temp.\nOk'
+    assert x.done and x.started
+
+    tool = ReplyExtractor()
+    assert tool.feed('{"tool": "look"}') == "" and not tool.started
+
+
+def test_phrase_splitter():
+    p = PhraseSplitter()
+    text = "The display shows zero zero three, which is a program number. Press PROG. Done"
+    got = [ph for i in range(0, len(text), 4) for ph in p.feed(text[i : i + 4])] + p.flush()
+    assert got == [
+        "The display shows zero zero three,",  # first phrase may break at a clause
+        "which is a program number.",
+        "Press PROG.",
+        "Done",
+    ]
+    short = PhraseSplitter()
+    assert short.feed("Yes, I can hear you. ") == ["Yes,", "I can hear you."]
+
+
+def test_resample_kokoro_stream():
+    assert _rate("audio/l16;rate=24000;endianness=little-endian") == 24000
+    r = AudioResampler(format="s16", layout="mono", rate=16000)
+    pcm = (np.sin(np.arange(24000) / 10) * 8000).astype(np.int16).tobytes()  # 1 s at 24 kHz
+    out = b"".join(_resample(r, pcm[i : i + 4800], 24000) for i in range(0, len(pcm), 4800))
+    out += _resample(r, None, 24000)
+    assert abs(len(out) // 2 - 16000) < 200
+
+
+def test_trim_kokoro_padding():
+    rate = 24000
+    voice = (np.sin(np.arange(rate // 2) / 5) * 8000).astype(np.int16)  # 0.5 s
+    pad = lambda s: np.zeros(int(rate * s), np.int16)  # noqa: E731
+    out = _trim_silence(np.concatenate([pad(0.4), voice, pad(0.5)]).tobytes(), rate)
+    assert abs(len(out) / 2 / rate - (0.03 + 0.5 + 0.15)) < 0.01
+    assert _trim_silence(pad(0.2).tobytes(), rate) == b""
+
+
+class _LoudVad:
+    """Stand-in for webrtcvad: any non-zero frame is speech."""
+
+    def is_speech(self, chunk: bytes, rate: int) -> bool:
+        return any(chunk)
+
+
+class _FakeStt:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def transcribe(self, pcm: bytes) -> str:
+        self.calls += 1
+        return f"utterance of {len(pcm)} bytes"
+
+
+def _frames(ms: int, loud: bool) -> bytes:
+    return (b"\x01\x00" if loud else b"\x00\x00") * (FRAME_BYTES // 2) * (ms // FRAME_MS)
+
+
+async def _feed(listener: Listener, pcm: bytes) -> None:
+    listener._pending += pcm
+    await listener._drain()
+    await asyncio.sleep(0.01)  # let transcription tasks run
+
+
+def test_listener_speculates_at_a_pause_and_commits_at_the_end():
+    async def run() -> None:
+        got: list[tuple[str, asyncio.Event]] = []
+
+        def on_text(text, started, ended, committed):
+            got.append((text, committed))
+            return asyncio.create_task(committed.wait())
+
+        listener = Listener(_FakeStt(), on_text)
+        listener._vad = _LoudVad()
+        await _feed(listener, _frames(600, True) + _frames(240, False))
+        assert len(got) == 1 and not got[0][1].is_set()  # reply prepared, not yet heard
+        await _feed(listener, _frames(150, False))
+        assert got[0][1].is_set() and len(got) == 1  # end of utterance: same reply, now heard
+
+    asyncio.run(run())
+
+
+def test_listener_cancels_speculation_when_the_user_carries_on():
+    async def run() -> None:
+        replies: list[asyncio.Task] = []
+        texts: list[str] = []
+
+        def on_text(text, started, ended, committed):
+            texts.append(text)
+            replies.append(asyncio.create_task(committed.wait()))
+            return replies[-1]
+
+        listener = Listener(_FakeStt(), on_text)
+        listener._vad = _LoudVad()
+        await _feed(listener, _frames(600, True) + _frames(240, False))
+        await _feed(listener, _frames(600, True) + _frames(390, False))
+        assert replies[0].cancelled()
+        assert len(texts) == 2 and texts[1] != texts[0]  # the second covers the whole utterance
+        await asyncio.sleep(0)
+        assert replies[1].done() and not replies[1].cancelled()
+
+    asyncio.run(run())

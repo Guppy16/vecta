@@ -6,8 +6,6 @@ distinct keyframes, taps) is appended as one JSON line to
 a developer over ssh — tails that file and replies through the `vecta` CLI.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from pathlib import Path

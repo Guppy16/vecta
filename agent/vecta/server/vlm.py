@@ -5,8 +5,6 @@ small structured verdict, and `answer` (free-form question over recent frames).
 Both are cheap enough to run continuously on the box's GPU.
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import logging

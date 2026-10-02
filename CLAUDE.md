@@ -13,6 +13,7 @@ Optimise for code Akash can read and maintain.
 - `uv` for everything (`uv sync`, `uv run`); package installed editable.
 - `ruff` for lint, format and import sorting — run `uv run ruff check --fix && uv run ruff format` before committing.
 - **Absolute imports only** (`from vecta.jobs.yolo import ...`). Never relative.
+- Python 3.14: annotations are lazy, so no `from __future__ import annotations`.
 - Prefer `asyncio`, `dataclasses`, type hints. Comment the why, not the what; don't over-comment.
 
 ## Kotlin

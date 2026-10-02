@@ -7,8 +7,6 @@ voice back up. The track paces itself in real time, emitting silence when
 there is nothing queued.
 """
 
-from __future__ import annotations
-
 import asyncio
 import fractions
 import time

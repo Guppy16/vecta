@@ -15,8 +15,6 @@
 All commands print the server's reply as JSON.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

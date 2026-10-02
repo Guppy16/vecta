@@ -1,7 +1,5 @@
 """Per-phone session state: task, frame buffer, on-disk media, rendered pages."""
 
-from __future__ import annotations
-
 import re
 import secrets
 from dataclasses import dataclass, field

@@ -9,8 +9,6 @@ Selection rules (carried over from the first prototype):
 - don't repeat "found" while the thing stays in view
 """
 
-from __future__ import annotations
-
 import asyncio
 import io
 import json

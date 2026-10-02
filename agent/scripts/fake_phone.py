@@ -7,8 +7,6 @@ Useful for testing the server end to end from a laptop, and as a reference for
 what the phone must do (offer -> POST /rtc/offer -> answer, then messages).
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging

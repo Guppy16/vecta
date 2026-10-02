@@ -5,8 +5,6 @@ Phone -> server events land in the session inbox (the agent tails it); the
 agent answers through /sessions/{id}/say, /mark, /watch, /page, /send.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import io
@@ -31,7 +29,7 @@ from vecta.server.ground import MarkerSpec, MarkerTracker
 from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
-from vecta.server.speech import Speaker, earcon
+from vecta.server.speech import Speaker, SpeechStream, earcon
 from vecta.server.talker import HOLDING_LINE, HOWTO_HINTS, LOOK_HINTS, Reply, Talker
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
@@ -117,55 +115,129 @@ async def rtc_offer(request: Request) -> dict[str, str]:
 
 
 async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None:
-    def heard(text: str, started_at: float) -> None:
-        session.inbox.append("voice", text=text, started_at=round(started_at, 3))
-        peer.send(m.Transcript(text=text))
-        if settings.earcons:
-            peer.voice.enqueue(base64.b64decode(earcon("heard").data))  # instant "got that"
-        if settings.talker and (lv := live.get(session.id)):
-            asyncio.create_task(_talk(lv, text))
+    def on_text(text: str, started: float, ended: float, committed: asyncio.Event) -> asyncio.Task:
+        return asyncio.create_task(_on_voice(session, peer, text, started, ended, committed))
 
-    listener = Listener(stt, heard)
+    listener = Listener(stt, on_text)
     if lv := live.get(session.id):
         lv.listener = listener
     await listener.run(track)
 
 
-async def _talk(lv: Live, text: str) -> None:
-    """Fast loop: let the talker answer (or stay quiet); escalate to the main agent if asked."""
-    s = lv.peer.session
+async def _on_voice(
+    session: Session,
+    peer: Peer,
+    text: str,
+    started: float,
+    ended: float,
+    committed: asyncio.Event,
+) -> None:
+    """One utterance. The talker starts on it straight away; everything the user or the
+    inbox can see waits for `committed` (the listener may still decide it was only a pause
+    and cancel this task)."""
+    lv = live.get(session.id)
+    talk = None
+    if settings.talker and lv:
+        talk = asyncio.create_task(_talk(lv, text, ended, committed))
     try:
-        reply = await lv.talker.turn(text)
-        wants_look = reply.tool == "look" or (not reply.tool and LOOK_HINTS.search(text))
-        if wants_look:  # the talker's one tool: describe the current frame
-            desc = await describe_view(s)
-            s.inbox.append("tool", name="look", result=desc)
-            reply = await lv.talker.tool_result("look", desc)
-            # fast answer, slow verification: the main agent fact-checks every vision answer
-            # against the real frame and corrects out loud if the talker got it wrong
-            kf_dir = s.dir / "keyframes"
-            frames = sorted(kf_dir.glob("kf_*.jpg")) if kf_dir.is_dir() else []
-            s.inbox.append(
-                "verify",
-                question=text,
-                caption=desc,
-                answer=reply.text,
-                keyframe=str(frames[-1]) if frames else None,
-            )
+        await committed.wait()
+    except asyncio.CancelledError:
+        if talk:
+            talk.cancel()
+        raise
+    session.inbox.append("voice", text=text, started_at=round(started, 3))
+    peer.send(m.Transcript(text=text))
+    if settings.earcons:
+        peer.voice.enqueue(base64.b64decode(earcon("heard").data))  # instant "got that"
+    if talk:
+        await talk
+
+
+async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) -> None:
+    """Fast loop: the talker answers (or stays quiet) and its reply is spoken while it is
+    still being written; escalations go to the main agent's inbox.
+
+    Runs speculatively: nothing is sent, logged or played until `committed` is set, and if
+    the task is cancelled the talker forgets the turn. `ended_at` is when the user stopped
+    speaking (epoch s), for the voice-to-voice latency.
+    """
+    s = lv.peer.session
+    saved = list(lv.talker.history)
+
+    async def sink(pcm: bytes) -> None:
+        await committed.wait()
+        await _play(lv, pcm)
+
+    voice = SpeechStream(tts, sink)
+    try:
+        if HOWTO_HINTS.search(text):
+            # how-to questions belong to the main agent; don't let the talker improvise one
+            lv.talker.heard(text)
+            lv.talker.said(HOLDING_LINE)
+            reply = Reply(HOLDING_LINE, True, 0)
+            voice.write(HOLDING_LINE)
+        elif LOOK_HINTS.search(text):
+            # obviously about the camera: skip the round trip where the talker asks to look
+            lv.talker.heard(text)
+            lv.talker.asked("look")
+            reply = await _look_and_answer(lv, text, voice.write, committed)
+        else:
+            reply = await lv.talker.turn(text, voice.write)
+            if reply.tool == "look":
+                reply = await _look_and_answer(lv, text, voice.write, committed)
+        await committed.wait()
+    except asyncio.CancelledError:
+        voice.cancel()
+        lv.talker.history[:] = saved  # it was only a pause; the user is still talking
+        raise
     except Exception as e:
         log.warning("talker failed: %s", e)
+        voice.cancel()
         return
-    # how-to questions belong to the main agent: force the escalation and don't let the
-    # talker improvise an answer, whatever it said
-    if not reply.escalate and HOWTO_HINTS.search(text) and not reply.tool:
-        reply = Reply(HOLDING_LINE, True, reply.latency_ms)
-        lv.talker.said(HOLDING_LINE)
     if reply.escalate:
         s.inbox.append("escalate", text=text, context=lv.talker.history[-6:])
         lv.peer.send(m.Status(phase="thinking"))
     if reply.text:
-        s.inbox.append("agent", text=reply.text, by="talker", latency_ms=reply.latency_ms)
-        await _speak(lv, reply.text, status="answer", latency_ms=reply.latency_ms)
+        lv.peer.send(m.AgentMessage(text=reply.text, status="answer", latency_ms=reply.latency_ms))
+    await voice.finish()
+    if reply.text:
+        v2v = _since(ended_at, voice.first_audio_at)
+        log.info("talker %r: first text %s ms, v2v %s ms", reply.text, reply.first_text_ms, v2v)
+        s.inbox.append(
+            "agent",
+            text=reply.text,
+            by="talker",
+            latency_ms=reply.latency_ms,
+            voice_to_voice_ms=v2v,
+        )
+
+
+async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Event) -> Reply:
+    """The talker's one tool: caption the current frame, then let it answer from the caption."""
+    s = lv.peer.session
+    desc = await describe_view(s)
+    reply = await lv.talker.tool_result("look", desc, on_text)
+    await committed.wait()
+    s.inbox.append("tool", name="look", result=desc)
+    # fast answer, slow verification: the main agent fact-checks every vision answer
+    # against the real frame and corrects out loud if the talker got it wrong
+    kf_dir = s.dir / "keyframes"
+    frames = sorted(kf_dir.glob("kf_*.jpg")) if kf_dir.is_dir() else []
+    s.inbox.append(
+        "verify",
+        question=text,
+        caption=desc,
+        answer=reply.text,
+        keyframe=str(frames[-1]) if frames else None,
+    )
+    return reply
+
+
+def _since(epoch_s: float | None, mono_s: float | None) -> int | None:
+    """ms from an epoch timestamp to a monotonic one (both taken on this machine)."""
+    if epoch_s is None or mono_s is None:
+        return None
+    return int((mono_s - time.monotonic() + time.time() - epoch_s) * 1000)
 
 
 async def describe_view(s: Session) -> str:
@@ -203,21 +275,24 @@ def _brightness(jpeg: bytes) -> float:
 
 
 async def _speak(
-    lv: Live, text: str, status: str = "answer", latency_ms: int | None = None
+    lv: Live,
+    text: str,
+    status: str = "answer",
+    latency_ms: int | None = None,
 ) -> bool:
     lv.peer.send(m.AgentMessage(text=text, status=status, latency_ms=latency_ms))
-    try:
-        chunks = await tts.chunks(text)
-    except Exception as e:
-        log.warning("tts failed: %s", e)
-        return False
-    pcm = b"".join(base64.b64decode(c.data) for c in chunks)
+    voice = SpeechStream(tts, lambda pcm: _play(lv, pcm))
+    voice.write(text)
+    await voice.finish()
+    return voice.first_audio_at is not None
+
+
+async def _play(lv: Live, pcm: bytes) -> None:
     # WebRTC's echo canceller handles most of our voice; the mute covers what it doesn't
     seconds = lv.peer.voice.pending_seconds + len(pcm) / (16000 * 2)
     if lv.listener:
         await lv.listener.mute_for(seconds + 0.5)
     lv.peer.voice.enqueue(pcm)
-    return True
 
 
 def _on_peer_closed(peer: Peer) -> None:

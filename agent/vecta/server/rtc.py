@@ -4,8 +4,6 @@ Signalling is a single HTTP offer/answer exchange (see `vecta.server.app`); on
 the tailnet both ends have stable addresses, so no STUN/TURN is configured.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable

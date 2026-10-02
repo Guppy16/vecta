@@ -1,9 +1,14 @@
+import asyncio
+import tempfile
+from pathlib import Path
+
 import av
 import numpy as np
 
 from vecta.server.frames import FrameBuffer
-from vecta.server.vlm import parse_verdict
-from vecta.server.watch import _pick, dhash, hamming
+from vecta.server.sessions import Session
+from vecta.server.vlm import Verdict, parse_verdict
+from vecta.server.watch import Keyframe, Watcher, _pick, dhash, hamming
 
 
 def frame(seed: int, blur: bool = False) -> av.VideoFrame:
@@ -47,11 +52,6 @@ def test_parse_verdict() -> None:
 
 def test_found_reported_once_until_gone() -> None:
     """Only new instances reach the phone: found, found, found -> one message."""
-    import asyncio
-
-    from vecta.server.sessions import Session
-    from vecta.server.vlm import Verdict
-    from vecta.server.watch import Keyframe, Watcher
 
     class FakeVlm:
         def __init__(self, verdicts: list[Verdict]) -> None:
@@ -62,9 +62,6 @@ def test_found_reported_once_until_gone() -> None:
 
     def v(status: str, count: int = 0) -> Verdict:
         return Verdict(status, "x" if status != "searching" else "", 1, count)
-
-    import tempfile
-    from pathlib import Path
 
     with tempfile.TemporaryDirectory() as d:
         session = Session(id="s", dir=Path(d), base_url="http://x", task="mug")

@@ -6,8 +6,6 @@ v1 grounds with Qwen3-VL through Lemonade (it answers with a box in a
 will replace it for ~10 Hz once it is in-process.
 """
 
-from __future__ import annotations
-
 import asyncio
 import io
 import json
