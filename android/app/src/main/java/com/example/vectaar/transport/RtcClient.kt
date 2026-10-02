@@ -29,6 +29,7 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
+import org.webrtc.audio.JavaAudioDeviceModule
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import kotlin.coroutines.resume
@@ -72,6 +73,10 @@ class RtcClient(
     private var surfaceHelper: SurfaceTextureHelper? = null
     private var videoTrack: VideoTrack? = null
     private var audioTrack: org.webrtc.AudioTrack? = null
+    private var audioSource: org.webrtc.AudioSource? = null
+    // Owned explicitly so close() can release it: the factory alone does not reliably stop
+    // the AudioRecord, which kept the mic (and Android's green dot) on after a failed connect.
+    private var audioDevice: JavaAudioDeviceModule? = null
     private var pc: PeerConnection? = null
     private var channel: DataChannel? = null
 
@@ -82,7 +87,10 @@ class RtcClient(
         PeerConnectionFactory.initialize(
             PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions()
         )
+        val adm = JavaAudioDeviceModule.builder(context).createAudioDeviceModule()
+        audioDevice = adm
         val f = PeerConnectionFactory.builder()
+            .setAudioDeviceModule(adm)
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
             .createPeerConnectionFactory()
@@ -115,8 +123,9 @@ class RtcClient(
         pc = peer
         peer.addTrack(track, listOf("stream0"))
         // always-on microphone; the server segments and transcribes it
-        val audioSource = f.createAudioSource(MediaConstraints())
-        audioTrack = f.createAudioTrack("audio0", audioSource).also { peer.addTrack(it, listOf("stream0")) }
+        val mic = f.createAudioSource(MediaConstraints())
+        audioSource = mic
+        audioTrack = f.createAudioTrack("audio0", mic).also { peer.addTrack(it, listOf("stream0")) }
         channel = peer.createDataChannel("control", DataChannel.Init()).apply {
             registerObserver(ChannelObserver())
         }
@@ -152,9 +161,16 @@ class RtcClient(
 
     fun close() {
         runCatching { capturer?.stopCapture() }
-        channel?.close(); pc?.close()
-        capturer?.dispose(); surfaceHelper?.dispose(); videoTrack?.dispose()
+        channel?.close()
+        pc?.close()
+        videoTrack?.dispose(); audioTrack?.dispose()
+        pc?.dispose()
+        capturer?.dispose(); surfaceHelper?.dispose()
+        audioSource?.dispose()
         factory?.dispose()
+        audioDevice?.release()              // stops the AudioRecord: mic off
+        pc = null; channel = null; factory = null; audioDevice = null
+        audioTrack = null; audioSource = null; videoTrack = null
     }
 
     // --- signalling: POST the offer, get the answer ---
