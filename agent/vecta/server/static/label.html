@@ -12,7 +12,7 @@
   :root {
     --ground: #0D1311; --surface: #141C19; --sunken: #101714; --ink: #E3ECE8; --muted: #8E9E98;
     --line: #25302C; --accent: #37C29F; --accent-ink: #06231B; --accent-soft: #13352B;
-    --wave: #3E5049; --warn: #F0B45C; --warn-soft: #3A2A10; --danger: #F2877E; --mark: #5A4A12;
+    --wave: #3E5049; --warn: #F0B45C; --warn-soft: #3A2A10; --danger: #F2877E; --danger-soft: #3A1714;
     --focus: #37C29F;
     --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
     --cond: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
@@ -22,16 +22,19 @@
   :root[data-theme="light"] {
     --ground: #EEF1F0; --surface: #FFFFFF; --sunken: #F5F7F6; --ink: #14201C; --muted: #5B6964;
     --line: #D5DDDA; --accent: #0B7A62; --accent-ink: #FFFFFF; --accent-soft: #D9F0E8;
-    --wave: #A9BBB5; --warn: #8F5400; --warn-soft: #FBEBD1; --danger: #A8261C; --mark: #FFE7A3;
+    --wave: #A9BBB5; --warn: #8F5400; --warn-soft: #FBEBD1; --danger: #A8261C; --danger-soft: #F8E0DD;
     --focus: #0B7A62;
     color-scheme: light;
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }  /* .panel/.bulk set display, which would beat the attribute */
   body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans);
          font-size: 14px; line-height: 1.5; padding: 20px 16px 40px; }
   button, input, textarea { font: inherit; color: inherit; }
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .mono { font-family: var(--mono); font-size: 0.92em; }
+  kbd { font-family: var(--mono); font-size: 11px; line-height: 1; border: 1px solid currentColor;
+        border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; opacity: .75; white-space: nowrap; }
 
   .app { max-width: 1180px; margin-inline: auto; display: grid; gap: 16px; }
   .top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
@@ -41,17 +44,19 @@
   .stat { display: grid; padding: 6px 12px; background: var(--surface); border: 1px solid var(--line);
           border-radius: 6px; min-width: 92px; }
   .stat b { font-family: var(--mono); font-weight: 500; font-size: 18px; font-variant-numeric: tabular-nums; }
-  .stat span { font-family: var(--cond); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-  .banner { padding: 10px 14px; border-radius: 6px; background: var(--warn-soft); color: var(--warn);
-            border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+  .stat span { font-family: var(--cond); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .banner { padding: 10px 14px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); }
 
-  .grid { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
   @media (max-width: 780px) { .grid { grid-template-columns: minmax(0, 1fr); } .queue ol { max-height: 34vh; } }
   .label { font-family: var(--cond); font-weight: 600; font-size: 11px; text-transform: uppercase;
-           letter-spacing: 0.08em; color: var(--muted); }
+           letter-spacing: .08em; color: var(--muted); }
 
-  .queue { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-  .queue-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  /* queue */
+  .queue { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+           position: sticky; top: 12px; }
+  .queue-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+                padding: 10px 14px; border-bottom: 1px solid var(--line); }
   .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
   .filters button { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px;
                     padding: 2px 10px; font-size: 12px; cursor: pointer; }
@@ -61,9 +66,9 @@
   .bulk button { border: 1px solid var(--line); background: var(--surface); border-radius: 5px; padding: 2px 8px;
                  font-size: 12px; cursor: pointer; }
   .bulk button:hover { border-color: var(--accent); color: var(--accent); }
-  .queue ol { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
+  .queue ol { list-style: none; margin: 0; padding: 0; max-height: 64vh; overflow-y: auto; }
   .item-btn { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 4px 10px;
-              align-items: center; padding: 10px 14px; background: none; border: 0;
+              align-items: center; padding: 9px 14px; background: none; border: 0;
               border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
   .queue li:last-child .item-btn { border-bottom: 0; }
   .item-btn:hover { background: var(--sunken); }
@@ -77,65 +82,74 @@
   .dot.unsure { background: var(--warn); border-color: var(--warn); }
   .dot.flagged { background: none; border: 3px solid var(--danger); }
 
+  /* bench */
   .bench { display: grid; gap: 12px; min-width: 0; }
   .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px;
            display: grid; gap: 12px; min-width: 0; }
   .item-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
-  .item-meta h2 { font-family: var(--mono); font-weight: 500; font-size: 16px; margin: 0; overflow-wrap: anywhere; }
+  .item-meta h2 { font-family: var(--mono); font-weight: 500; font-size: 16px; margin: 0; }
   .item-meta .kv { color: var(--muted); font-size: 12.5px; }
   .item-meta .kv .mono { color: var(--ink); }
   .kind { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
 
-  .player { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; }
-  .play { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent);
+  .player { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+  .round { display: grid; justify-items: center; gap: 4px; }
+  .play { width: 48px; height: 48px; border-radius: 50%; border: 0; background: var(--accent);
           color: var(--accent-ink); cursor: pointer; display: grid; place-items: center; }
   .play svg { width: 18px; height: 18px; fill: currentColor; }
+  .replay { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface);
+            cursor: pointer; display: grid; place-items: center; }
+  .replay svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+  .round kbd { color: var(--muted); }
   .wave-wrap { display: grid; gap: 4px; min-width: 0; }
-  canvas.wave { width: 100%; height: 84px; display: block; cursor: pointer; background: var(--sunken); border-radius: 6px; }
+  canvas.wave { width: 100%; height: 72px; display: block; cursor: pointer; background: var(--sunken); border-radius: 6px; }
   .wave-foot { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px;
                color: var(--muted); font-variant-numeric: tabular-nums; }
 
   .hyps { display: grid; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-  .hyp { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+  .hyp { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
          padding: 8px 12px; border-bottom: 1px solid var(--line); }
   .hyp:last-child { border-bottom: 0; }
-  .hyp.live { background: var(--sunken); }
   .hyp .who { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
-  .hyp.live .who { color: var(--ink); font-weight: 500; }
   .hyp .text { overflow-wrap: anywhere; }
   .hyp .text.none { color: var(--muted); font-style: italic; }
-  .hyp mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
-  .use { border: 1px solid var(--line); background: var(--surface); border-radius: 5px; padding: 3px 10px;
-         font-size: 12.5px; cursor: pointer; }
+  .use { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); background: var(--surface);
+         border-radius: 5px; padding: 3px 8px; font-size: 12.5px; cursor: pointer; }
   .use:hover { border-color: var(--accent); color: var(--accent); }
   @media (max-width: 560px) { .hyp { grid-template-columns: minmax(0, 1fr) auto; } .hyp .who { grid-column: 1 / 3; } }
 
-  .form { display: grid; gap: 10px; }
-  .form label.field { display: grid; gap: 6px; }
-  textarea#reference { width: 100%; min-height: 72px; resize: vertical; padding: 10px 12px;
-                       border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 15px; }
-  textarea#reference:disabled { background: var(--sunken); color: var(--muted); }
-  input#note { width: 100%; padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
-  .checks { display: flex; flex-wrap: wrap; gap: 8px 20px; }
-  .checks label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
-  .checks input { accent-color: var(--accent); width: 16px; height: 16px; }
-  .derived { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 24px; }
-  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
-          font-size: 12px; font-weight: 500; border: 1px solid var(--line); color: var(--muted); }
+  /* the answer */
+  .said-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .mode { font-size: 12px; color: var(--muted); }
+  .mode.editing { color: var(--accent); }
+  textarea#reference { width: 100%; min-height: 64px; resize: vertical; padding: 10px 12px; border: 1px solid var(--line);
+                       border-radius: 6px; background: var(--sunken); font-size: 16px; }
+  textarea#reference:focus { background: var(--surface); border-color: var(--accent); outline: none; }
+  .derived { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 22px; }
+  .chip { display: inline-flex; align-items: center; padding: 1px 10px; border-radius: 999px; font-size: 12px;
+          font-weight: 500; border: 1px solid var(--line); color: var(--muted); }
   .chip.yes { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
   .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
-  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
-  .save { border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-ink); font-weight: 600;
-          padding: 9px 18px; cursor: pointer; }
-  .save:disabled { opacity: 0.5; cursor: default; }
-  .status { font-size: 13px; color: var(--muted); }
+
+  .acts { display: grid; grid-template-columns: 2fr repeat(4, 1fr); gap: 8px; }
+  @media (max-width: 640px) { .acts { grid-template-columns: 1fr 1fr; } .acts .primary { grid-column: 1 / 3; } }
+  .act { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px;
+         border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer;
+         font-weight: 500; text-align: left; }
+  .act:hover { border-color: var(--muted); }
+  .act.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .act.noise { color: var(--warn); }
+  .act.out { color: var(--danger); }
+  .act[aria-pressed="true"] { box-shadow: inset 0 0 0 2px currentColor; }
+  .act:disabled { opacity: .5; cursor: default; }
+
+  .note-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
+  input#note { width: 100%; padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); }
+  input#note:focus { background: var(--surface); border-color: var(--accent); outline: none; }
+  .status { font-size: 13px; color: var(--muted); min-height: 20px; }
   .status.err { color: var(--danger); }
   .status.ok { color: var(--accent); }
-  .keys { color: var(--muted); font-size: 12px; }
-  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px;
-        border-radius: 4px; padding: 0 5px; background: var(--surface); }
   .empty { padding: 32px 16px; text-align: center; color: var(--muted); }
-  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
@@ -143,9 +157,8 @@
   <header class="top">
     <div>
       <h1>Vecta Voice Labels</h1>
-      <p>Every utterance the phone's microphone picked up. Listen and write what was actually said.
-        Labels are saved on the box and used to score speech recognition models. Audio that isn't
-        labelled (or is marked not worth keeping) is deleted after 24 hours.</p>
+      <p>Every utterance the phone's microphone picked up. Listen, then confirm or fix what was said.
+        Audio that isn't labelled (or is left out) is deleted after 24 hours.</p>
     </div>
     <div class="stats" id="stats" aria-live="polite"></div>
   </header>
@@ -154,7 +167,7 @@
 
   <main class="grid">
     <nav class="queue" aria-label="Recorded utterances">
-      <div class="queue-head"><span class="label">Utterances</span><span class="label" id="queue-count"></span></div>
+      <div class="queue-head"><span class="label" id="queue-count">Utterances</span><span class="label"><kbd>↑</kbd> <kbd>↓</kbd> move</span></div>
       <div class="filters" id="filters" role="group" aria-label="Show"></div>
       <div class="bulk" id="bulk" hidden>
         <span id="bulk-count"></span>
@@ -165,61 +178,60 @@
     </nav>
 
     <section class="bench" aria-live="polite">
-      <div class="panel empty" id="bench-empty">No recordings yet. Talk to the app and they appear here.</div>
+      <div class="panel empty" id="bench-empty">Nothing to label here.</div>
 
       <div class="panel" id="bench-audio" hidden>
         <div class="item-meta">
           <h2 id="item-id"></h2>
-          <span class="kv">session <span class="mono" id="item-session"></span></span>
           <span class="kv">recorded <span class="mono" id="item-when"></span></span>
           <span class="kv">length <span class="mono" id="item-dur"></span></span>
           <span class="kind" id="item-kind" hidden></span>
         </div>
         <div class="player">
-          <button type="button" class="play" id="play" aria-label="Play">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="M7 4.5v15l13-7.5z"/></svg>
-          </button>
+          <div class="round">
+            <button type="button" class="play" id="play" aria-label="Play (Space)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="M7 4.5v15l13-7.5z"/></svg>
+            </button>
+            <kbd>Space</kbd>
+          </div>
           <div class="wave-wrap">
             <canvas class="wave" id="wave" aria-label="Waveform; click to seek"></canvas>
             <div class="wave-foot"><span id="t-now">0:00.0</span><span id="t-end">0:00.0</span></div>
+          </div>
+          <div class="round">
+            <button type="button" class="replay" id="replay" aria-label="Replay from the start (R)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v4h4"/></svg>
+            </button>
+            <kbd>R</kbd>
           </div>
         </div>
         <audio id="audio" preload="auto"></audio>
       </div>
 
+      <div class="panel" id="bench-form" hidden>
+        <div class="said-head">
+          <span class="label">What was said</span>
+          <span class="mode" id="mode"><kbd>E</kbd> edit</span>
+        </div>
+        <textarea id="reference" readonly placeholder="(nothing heard) — press E to type, or N if it isn't speech"></textarea>
+        <div class="derived" id="derived"></div>
+        <div class="acts">
+          <button type="button" class="act primary" id="act-ok"><span id="ok-text">Correct</span> <kbd>Enter</kbd></button>
+          <button type="button" class="act" id="act-edit">Edit <kbd>E</kbd></button>
+          <button type="button" class="act noise" id="act-noise">No speech <kbd>N</kbd></button>
+          <button type="button" class="act" id="act-unsure">Unsure <kbd>U</kbd></button>
+          <button type="button" class="act out" id="act-out">Leave out <kbd>X</kbd></button>
+        </div>
+        <div class="note-row">
+          <label class="label" for="note">Comment <kbd>C</kbd></label>
+          <input id="note" type="text" placeholder="for Claude, optional — Enter saves">
+        </div>
+        <div class="status" id="status"></div>
+      </div>
+
       <div class="panel" id="bench-hyps" hidden>
         <span class="label">What each model heard</span>
         <div class="hyps" id="hyps"></div>
-      </div>
-
-      <div class="panel form" id="bench-form" hidden>
-        <label class="field" for="reference">
-          <span class="label">What was actually said</span>
-          <textarea id="reference" placeholder="Type the words exactly as spoken, e.g. Can you tell me some details about this plug?"></textarea>
-        </label>
-        <div class="derived" id="derived"></div>
-        <div class="checks">
-          <label for="no-speech"><input type="checkbox" id="no-speech"> No speech (noise only)</label>
-          <label for="unsure"><input type="checkbox" id="unsure"> Unsure, needs another listen</label>
-          <label for="exclude"><input type="checkbox" id="exclude"> Not worth keeping</label>
-        </div>
-        <label class="field" for="note">
-          <span class="label">Comment for Claude (optional)</span>
-          <input id="note" type="text" placeholder="e.g. talking to someone else, not the app. A comment alone leaves it unlabelled.">
-        </label>
-        <div class="actions">
-          <button type="button" class="save" id="save">Save and next</button>
-          <span class="status" id="status"></span>
-        </div>
-        <div class="keys">
-          Typing: <kbd>Enter</kbd> save and next &nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd> new line &nbsp;
-          <kbd>Alt</kbd>+<kbd>P</kbd> play/pause &nbsp; <kbd>Alt</kbd>+<kbd>R</kbd> replay &nbsp;
-          <kbd>Alt</kbd>+<kbd>N</kbd> no speech &nbsp; <kbd>Alt</kbd>+<kbd>X</kbd> leave out &nbsp;
-          <kbd>Alt</kbd>+<kbd>U</kbd> unsure &nbsp; <kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>9</kbd> use a model's text &nbsp;
-          <kbd>Esc</kbd> leave the text box<br>
-          Elsewhere: same keys without <kbd>Alt</kbd>, plus <kbd>Space</kbd> play, <kbd>J</kbd><kbd>K</kbd> next / previous,
-          <kbd>E</kbd> or <kbd>Enter</kbd> edit text
-        </div>
       </div>
     </section>
   </main>
@@ -232,7 +244,13 @@
     too_short: "Too short: never transcribed",
     ours: "Started while the app was talking: ignored as its own voice",
   };
-  const state = { items: [], labels: {}, drafts: {}, current: null, filter: "speech" };
+  // Whisper's non-speech markers: [BLANK_AUDIO], (music), *laughs*, or just punctuation
+  const stripMarkers = (t) => (t || "").replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, " ");
+  const hasWords = (t) => /[a-z0-9]/i.test(stripMarkers(t));
+  const liveText = (u) => (u.hyps.find((h) => h.live) || {}).text;
+  const cleanText = (t) => stripMarkers(t).replace(/\s+/g, " ").trim();
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
+
   // Most recordings are not speech: the VAD fires on clicks and room noise. Speech first.
   const GROUPS = {
     speech: { name: "Speech", test: (u) => u.kind === "speech" && hasWords(liveText(u)) },
@@ -241,6 +259,9 @@
     ours: { name: "Our voice", test: (u) => u.kind === "ours" },
     all: { name: "All", test: () => true },
   };
+  const state = { items: [], labels: {}, drafts: {}, current: null, filter: "speech" };
+  const shown = () => state.items.filter(GROUPS[state.filter].test);
+  const itemOf = (key) => state.items.find((u) => u.key === key);
 
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -252,20 +273,13 @@
     for (const c of [].concat(children)) if (c) node.append(c);
     return node;
   }
+  const kbd = (k) => el("kbd", { text: k });
 
   function fmt(t) {
     if (!isFinite(t)) t = 0;
     const m = Math.floor(t / 60);
     return `${m}:${(t - m * 60).toFixed(1).padStart(4, "0")}`;
   }
-
-  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
-  const itemOf = (key) => state.items.find((u) => u.key === key);
-  const liveText = (u) => (u.hyps.find((h) => h.live) || {}).text;
-  // Whisper's non-speech markers: [BLANK_AUDIO], (music), *laughs*, or just punctuation
-  const hasWords = (t) => !!t && !/^\s*(\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|[\s.,!?-]+)\s*$/.test(t.replace(/\n/g, " "))
-    && /[a-z0-9]/i.test(t.replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, ""));
-  const shown = () => state.items.filter(GROUPS[state.filter].test);
 
   function statusOf(key) {
     const l = state.labels[key];
@@ -277,54 +291,53 @@
     return "todo";
   }
 
-  // Unsaved edits win over the stored label, so a refresh never wipes what is being typed.
-  function draftFor(key) {
-    if (state.drafts[key]) return state.drafts[key];
-    const l = state.labels[key] || {};
-    return { reference: l.reference || "", noSpeech: !!l.noSpeech, unsure: !!l.unsure,
-             exclude: !!l.exclude, note: l.note || "", dirty: false };
+  // The text box shows: an unsaved edit, else the saved label, else Whisper's words.
+  function textFor(key) {
+    if (key in state.drafts) return state.drafts[key];
+    const l = state.labels[key];
+    if (l && !l.noSpeech && !l.exclude) return l.reference || "";
+    const u = itemOf(key);
+    return u ? cleanText(liveText(u)) : "";
   }
 
+  // ---- rendering ----
   function renderStats() {
     const n = state.items.length;
-    let done = 0, right = 0, speech = 0, noise = 0, unsure = 0, excluded = 0, flagged = 0;
+    let done = 0, right = 0, speech = 0, noise = 0, unsure = 0, out = 0;
     for (const u of state.items) {
       const l = state.labels[u.key];
       const s = statusOf(u.key);
       if (s === "done") done++;
       if (s === "unsure") unsure++;
-      if (s === "flagged") flagged++;
-      if (l && l.noSpeech && !l.exclude) noise++;
-      if (l && l.exclude) excluded++;
-      if (l && !l.noSpeech && !l.exclude && (l.reference || "").trim()) {
+      if (!l) continue;
+      if (l.exclude) out++;
+      else if (l.noSpeech) noise++;
+      else if ((l.reference || "").trim()) {
         speech++;
-        if (norm(l.reference) === norm(liveText(u))) right++;
+        if (norm(l.reference) === norm(cleanText(liveText(u)))) right++;
       }
     }
     const stat = (value, label) => el("div", { class: "stat" }, [el("b", { text: String(value) }), el("span", { text: label })]);
     $("stats").replaceChildren(
       stat(`${done}/${n}`, "labelled"),
-      stat(speech ? `${right}/${speech}` : "–", "whisper exact"),
+      stat(speech ? `${Math.round((100 * right) / speech)}%` : "–", `whisper exact (${speech})`),
       stat(noise, "no speech"),
       stat(unsure, "unsure"),
-      stat(excluded, "left out"),
-      stat(flagged, "comments"),
+      stat(out, "left out"),
     );
-    $("queue-count").textContent = n ? `${done} of ${n} done` : "";
   }
 
   function renderFilters() {
     $("filters").replaceChildren(...Object.entries(GROUPS).map(([key, g]) => {
       const n = state.items.filter(g.test).length;
       const todo = state.items.filter((u) => g.test(u) && statusOf(u.key) === "todo").length;
-      const b = el("button", { type: "button", "aria-pressed": String(state.filter === key),
-                               text: `${g.name} ${todo}/${n}` });
+      const b = el("button", { type: "button", "aria-pressed": String(state.filter === key), text: `${g.name} ${todo}/${n}` });
       b.addEventListener("click", () => { state.filter = key; renderQueue(); selectFirstTodo(); });
       return b;
     }));
     const todo = shown().filter((u) => statusOf(u.key) === "todo");
     $("bulk").hidden = !["blank", "short", "ours"].includes(state.filter) || !todo.length;
-    $("bulk-count").textContent = `${todo.length} unlabelled here:`;
+    $("bulk-count").textContent = `${todo.length} to do here:`;
   }
 
   function renderQueue() {
@@ -339,21 +352,16 @@
     list.replaceChildren(...items.map((u) => {
       const l = state.labels[u.key];
       const s = statusOf(u.key);
-      const labelled = l && (l.reference || l.noSpeech || l.exclude);
-      const said = l && l.exclude ? "Left out" : l && l.noSpeech ? "No speech" : (l && l.reference) || "";
-      const preview = s === "flagged" ? `Comment: ${l.note.trim()}`
-        : labelled ? `✓ ${said}`
-        : u.kind === "too_short" ? "too short, not transcribed"
-        : u.kind === "ours" ? "ignored as the app's voice"
-        : `whisper: ${liveText(u) ?? ""}`;
+      const preview = !l ? (hasWords(liveText(u)) ? `whisper: ${cleanText(liveText(u))}` : KIND_NOTES[u.kind] || "no words heard")
+        : l.exclude ? "✓ left out" : l.noSpeech ? "✓ no speech" : l.reference ? `✓ ${l.reference}` : `comment: ${l.note}`;
       const btn = el("button", {
         type: "button",
         class: "item-btn",
         "aria-current": String(u.key === state.current),
-        "aria-label": `Utterance ${u.id}, ${s === "done" ? "labelled" : s === "unsure" ? "unsure" : s === "flagged" ? "has a comment, not labelled" : "not labelled"}`,
+        "aria-label": `${u.id}, ${s === "todo" ? "not labelled" : s}`,
       }, [
         el("span", { class: `dot ${s === "todo" ? "" : s}`, "aria-hidden": "true" }),
-        el("span", { class: "id", text: `${u.session.slice(0, 4)}·${u.id}` }),
+        el("span", { class: "id", text: `${u.id} · ${u.started ? new Date(u.started * 1000).toLocaleTimeString() : ""}` }),
         el("span", { class: "dur", text: `${Number(u.duration_s).toFixed(1)} s` }),
         el("span", { class: "said", text: preview }),
       ]);
@@ -364,52 +372,48 @@
   }
 
   function renderHyps(u) {
+    let n = 0;
     $("hyps").replaceChildren(...u.hyps.map((h) => {
-      const has = typeof h.text === "string" && h.text.length > 0;
-      const text = el("span", { class: has ? "text" : "text none", text: has ? h.text : h.text === "" ? "(empty)" : "(no result)" });
-      const use = has ? el("button", { type: "button", class: "use", text: "Use" }) : el("span");
-      if (has) use.addEventListener("click", () => {
-        state.drafts[u.key] = { ...draftFor(u.key), reference: h.text, noSpeech: false, dirty: true };
-        fillForm(u.key);
-        $("reference").focus();
-      });
-      return el("div", { class: h.live ? "hyp live" : "hyp" }, [el("span", { class: "who", text: h.backend }), text, use]);
+      const has = hasWords(h.text);
+      const text = el("span", { class: has ? "text" : "text none", text: has ? cleanText(h.text) : h.text == null ? "(not transcribed)" : "(nothing)" });
+      let use = el("span");
+      if (has) {
+        const i = ++n;
+        use = el("button", { type: "button", class: "use", title: `Use this text (${i})` }, ["Use", kbd(String(i))]);
+        use.addEventListener("click", () => useHyp(i));
+      }
+      return el("div", { class: "hyp" }, [el("span", { class: "who", text: h.backend }), text, use]);
     }));
   }
 
-  function renderDerived(key) {
-    const d = draftFor(key);
-    const u = itemOf(key);
-    const chips = [];
-    if (d.exclude) chips.push(el("span", { class: "chip warn", text: "Left out of the test set" }));
-    else if (d.noSpeech) chips.push(el("span", { class: "chip", text: "No speech: a model that writes words here is hallucinating" }));
-    else if (!d.reference.trim() && d.note.trim()) chips.push(el("span", { class: "chip warn", text: "Comment only: not counted as labelled" }));
-    else if (!d.reference.trim()) chips.push(el("span", { class: "chip", text: "Not labelled yet" }));
-    else chips.push(u && norm(d.reference) === norm(liveText(u))
-      ? el("span", { class: "chip yes", text: "Whisper got it exactly" })
-      : el("span", { class: "chip", text: "Differs from Whisper: counts as a recognition error" }));
-    if (d.unsure) chips.push(el("span", { class: "chip warn", text: "Unsure" }));
-    if (d.dirty) chips.push(el("span", { class: "chip warn", text: "Unsaved" }));
-    $("derived").replaceChildren(...chips);
-  }
-
-  function fillForm(key) {
-    const d = draftFor(key);
+  function renderForm() {
+    const key = state.current;
+    if (!key) return;
     const ref = $("reference");
-    if (ref.value !== d.reference) ref.value = d.reference;
-    ref.disabled = d.noSpeech || d.exclude;
-    $("no-speech").checked = d.noSpeech;
-    $("unsure").checked = d.unsure;
-    $("exclude").checked = d.exclude;
-    if ($("note").value !== d.note) $("note").value = d.note;
-    renderDerived(key);
-  }
+    const editing = document.activeElement === ref;
+    const text = textFor(key);
+    if (!editing && ref.value !== text) ref.value = text;
+    const l = state.labels[key] || {};
+    $("act-noise").setAttribute("aria-pressed", String(!!l.noSpeech));
+    $("act-unsure").setAttribute("aria-pressed", String(!!l.unsure));
+    $("act-out").setAttribute("aria-pressed", String(!!l.exclude));
+    $("ok-text").textContent = editing || key in state.drafts ? "Save" : "Correct";
+    $("mode").className = editing ? "mode editing" : "mode";
+    $("mode").replaceChildren(...(editing
+      ? ["editing · ", kbd("Enter"), " save · ", kbd("Esc"), " stop · ", kbd("Ctrl"), "+", kbd("Space"), " play"]
+      : [kbd("E"), " edit"]));
+    if (document.activeElement !== $("note")) $("note").value = l.note || "";
 
-  function editDraft(patch) {
-    if (!state.current) return;
-    state.drafts[state.current] = { ...draftFor(state.current), ...patch, dirty: true };
-    renderDerived(state.current);
-    setStatus("");
+    const chips = [];
+    const u = itemOf(key);
+    if (l.exclude) chips.push(el("span", { class: "chip warn", text: "Left out" }));
+    else if (l.noSpeech) chips.push(el("span", { class: "chip", text: "No speech" }));
+    else if (l.reference) chips.push(el("span", { class: "chip yes", text: "Saved" }));
+    if (l.unsure) chips.push(el("span", { class: "chip warn", text: "Unsure" }));
+    if (key in state.drafts) chips.push(el("span", { class: "chip warn", text: "Unsaved edit" }));
+    else if (!l.reference && !l.noSpeech && !l.exclude && u && hasWords(liveText(u)))
+      chips.push(el("span", { class: "chip", text: "Whisper's text — Enter if it's right" }));
+    $("derived").replaceChildren(...chips);
   }
 
   function setStatus(text, kind = "") {
@@ -457,21 +461,20 @@
   }
 
   function loop() { drawWave(); if (!audio.paused) raf = requestAnimationFrame(loop); }
-
   function setPlayIcon() {
     const playing = !audio.paused;
     $("play-icon").setAttribute("d", playing ? "M6 4.5h4v15H6zM14 4.5h4v15h-4z" : "M7 4.5v15l13-7.5z");
-    $("play").setAttribute("aria-label", playing ? "Pause" : "Play");
   }
-
   const togglePlay = () => (audio.paused ? audio.play().catch(() => {}) : audio.pause());
+  const replay = () => { audio.currentTime = 0; audio.play().catch(() => {}); };
   audio.addEventListener("play", () => { setPlayIcon(); cancelAnimationFrame(raf); loop(); });
   audio.addEventListener("pause", () => { setPlayIcon(); drawWave(); });
   audio.addEventListener("ended", () => { setPlayIcon(); drawWave(); });
   audio.addEventListener("seeked", drawWave);
   audio.addEventListener("loadedmetadata", drawWave);
-  audio.addEventListener("error", () => { if (state.current) setStatus("This recording didn't load.", "err"); });
+  audio.addEventListener("error", () => { if (state.current) setStatus("This recording didn't load (it may have been deleted).", "err"); });
   $("play").addEventListener("click", togglePlay);
+  $("replay").addEventListener("click", replay);
   canvas.addEventListener("click", (e) => {
     const u = itemOf(state.current);
     const duration = (u && Number(u.duration_s)) || audio.duration;
@@ -481,7 +484,6 @@
     drawWave();
   });
   new ResizeObserver(drawWave).observe(canvas);
-  new MutationObserver(drawWave).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
   // ---- selection ----
   function select(key, autoplay = false) {
@@ -492,27 +494,23 @@
     for (const id of ["bench-audio", "bench-hyps", "bench-form"]) $(id).hidden = false;
     $("bench-empty").hidden = true;
     $("item-id").textContent = u.id;
-    $("item-session").textContent = u.session;
     $("item-when").textContent = u.started ? new Date(u.started * 1000).toLocaleString() : "–";
     $("item-dur").textContent = `${Number(u.duration_s).toFixed(2)} s`;
     $("item-kind").hidden = !KIND_NOTES[u.kind];
     $("item-kind").textContent = KIND_NOTES[u.kind] || "";
-    renderHyps(u);
-    fillForm(key);
-    renderQueue();
     if (changed) {
+      stopEditing();
       audio.pause();
       setStatus("");
       audio.src = `/label/audio/${u.session}/${u.id}.wav`;
       drawWave();
       if (autoplay) audio.play().catch(() => {});
-      const row = document.querySelector('.item-btn[aria-current="true"]');
-      if (row) row.scrollIntoView({ block: "nearest" });
-      if (autoplay && !$("reference").disabled) {
-        $("reference").focus();
-        $("reference").select();  // typing replaces Whisper's text; arrows keep it
-      }
     }
+    renderHyps(u);
+    renderForm();
+    renderQueue();
+    const row = document.querySelector('.item-btn[aria-current="true"]');
+    if (row && changed) row.scrollIntoView({ block: "nearest" });
   }
 
   function step(delta) {
@@ -526,24 +524,93 @@
     const items = shown();
     const first = items.find((u) => statusOf(u.key) === "todo") || items[0];
     if (first) select(first.key, false);
+    else {
+      state.current = null;
+      for (const id of ["bench-audio", "bench-hyps", "bench-form"]) $(id).hidden = true;
+      $("bench-empty").hidden = false;
+    }
   }
 
-  // one-key verdicts: set it and save straight away
-  function quick(patch) {
-    if (!state.current) return;
-    state.drafts[state.current] = { ...draftFor(state.current), ...patch, dirty: true };
-    fillForm(state.current);
-    save();
+  function nextTodo(fromKey) {
+    const items = shown();
+    const i = items.findIndex((x) => x.key === fromKey);
+    const next = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0))).find((x) => statusOf(x.key) === "todo");
+    if (next) setTimeout(() => select(next.key, true), 200);
+    else setStatus("All done in this view.", "ok");
   }
+
+  // ---- editing ----
+  function startEditing() {
+    const ref = $("reference");
+    ref.readOnly = false;
+    ref.focus();
+    ref.setSelectionRange(ref.value.length, ref.value.length);
+    renderForm();
+  }
+  function stopEditing() {
+    const ref = $("reference");
+    ref.readOnly = true;
+    if (document.activeElement === ref || document.activeElement === $("note")) document.activeElement.blur();
+    renderForm();
+  }
+  $("reference").addEventListener("focus", () => { $("reference").readOnly = false; renderForm(); });
+  $("reference").addEventListener("blur", () => { $("reference").readOnly = true; renderForm(); });
+  $("reference").addEventListener("input", (e) => { state.drafts[state.current] = e.target.value; renderForm(); setStatus(""); });
 
   function useHyp(n) {
     const u = itemOf(state.current);
-    const h = u && u.hyps[n - 1];
-    if (!h || typeof h.text !== "string") return;
-    state.drafts[u.key] = { ...draftFor(u.key), reference: h.text, noSpeech: false, dirty: true };
-    fillForm(u.key);
-    $("reference").focus();
+    const h = u && u.hyps.filter((x) => hasWords(x.text))[n - 1];
+    if (!h) return;
+    state.drafts[u.key] = cleanText(h.text);
+    $("reference").value = state.drafts[u.key];
+    startEditing();
   }
+
+  // ---- saving: every verdict saves and moves on ----
+  async function post(label) {
+    const u = itemOf(state.current);
+    if (!u) return false;
+    const key = u.key;
+    try {
+      const res = await fetch("/label", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: u.session, id: u.id, note: $("note").value, ...label }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      state.labels[key] = await res.json();
+      delete state.drafts[key];
+    } catch (e) {
+      setStatus(e instanceof TypeError ? "Couldn't reach the Vecta server. Check Tailscale and try again."
+                                       : `Couldn't save: ${e.message}`, "err");
+      return false;
+    }
+    stopEditing();
+    renderStats();
+    renderQueue();
+    nextTodo(key);
+    return true;
+  }
+
+  function accept() {
+    const text = $("reference").value.trim();
+    if (!text) { setStatus("Nothing written. Press E to type it, or N if there's no speech.", "err"); return; }
+    post({ reference: text }).then((ok) => ok && setStatus("Saved", "ok"));
+  }
+  const noSpeech = () => post({ noSpeech: true }).then((ok) => ok && setStatus("No speech", "ok"));
+  const unsure = () => post({ reference: $("reference").value.trim(), unsure: true }).then((ok) => ok && setStatus("Marked unsure", "ok"));
+  const leaveOut = () => post({ exclude: true }).then((ok) => ok && setStatus("Left out", "ok"));
+  function saveNote() {
+    const l = state.labels[state.current] || {};
+    post({ reference: l.reference || "", noSpeech: !!l.noSpeech, unsure: !!l.unsure, exclude: !!l.exclude })
+      .then((ok) => ok && setStatus("Comment saved", "ok"));
+  }
+
+  $("act-ok").addEventListener("click", accept);
+  $("act-edit").addEventListener("click", startEditing);
+  $("act-noise").addEventListener("click", noSpeech);
+  $("act-unsure").addEventListener("click", unsure);
+  $("act-out").addEventListener("click", leaveOut);
 
   async function bulk(patch) {
     const todo = shown().filter((u) => statusOf(u.key) === "todo");
@@ -562,81 +629,40 @@
   $("bulk-noise").addEventListener("click", () => bulk({ noSpeech: true }));
   $("bulk-out").addEventListener("click", () => bulk({ exclude: true, note: "bulk: not speech" }));
 
-  // ---- form ----
-  $("reference").addEventListener("input", (e) => editDraft({ reference: e.target.value }));
-  $("note").addEventListener("input", (e) => editDraft({ note: e.target.value }));
-  $("unsure").addEventListener("change", (e) => editDraft({ unsure: e.target.checked }));
-  $("no-speech").addEventListener("change", (e) => {
-    editDraft({ noSpeech: e.target.checked });
-    $("reference").disabled = e.target.checked || $("exclude").checked;
-  });
-  $("exclude").addEventListener("change", (e) => {
-    editDraft({ exclude: e.target.checked });
-    $("reference").disabled = e.target.checked || $("no-speech").checked;
-  });
-
-  async function save() {
-    const key = state.current;
-    const u = itemOf(key);
-    if (!u) return;
-    const d = draftFor(key);
-    if (!d.noSpeech && !d.exclude && !d.reference.trim() && !d.note.trim()) {
-      setStatus("Write what was said, tick an option, or leave a comment.", "err");
-      $("reference").focus();
+  // ---- keyboard ----
+  // Reviewing (nothing focused): single keys, shown on the buttons. Editing the text:
+  // Enter saves, Esc stops, Ctrl+Space plays. Comment box: Enter saves, Esc stops.
+  document.addEventListener("keydown", (e) => {
+    const id = e.target.id;
+    if (id === "reference") {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); accept(); }
+      else if (e.key === "Escape") { e.preventDefault(); stopEditing(); }
+      else if (e.key === " " && e.ctrlKey) { e.preventDefault(); togglePlay(); }
       return;
     }
-    $("save").disabled = true;
-    setStatus("Saving…");
-    try {
-      const res = await fetch("/label", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ session: u.session, id: u.id, reference: d.reference, noSpeech: d.noSpeech,
-                               unsure: d.unsure, exclude: d.exclude, note: d.note }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
-      state.labels[key] = await res.json();
-      delete state.drafts[key];
-      const l = state.labels[key];
-      setStatus(!l.reference && !l.noSpeech && !l.exclude ? "Comment saved. The utterance stays unlabelled." : "Saved", "ok");
-      renderStats();
-      renderQueue();
-      const items = shown();
-      const i = items.findIndex((x) => x.key === key);
-      const next = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0)))
-        .find((x) => statusOf(x.key) === "todo");
-      if (next) setTimeout(() => select(next.key, true), 250);
-    } catch (e) {
-      setStatus(e instanceof TypeError ? "Couldn't reach the Vecta server. Check Tailscale and press Save again."
-                                       : `Couldn't save: ${e.message}`, "err");
-    } finally {
-      $("save").disabled = false;
+    if (id === "note") {
+      if (e.key === "Enter") { e.preventDefault(); saveNote(); }
+      else if (e.key === "Escape") { e.preventDefault(); stopEditing(); }
+      return;
     }
-  }
-  $("save").addEventListener("click", save);
-
-  document.addEventListener("keydown", (e) => {
-    const inText = e.target.id === "reference" || e.target.id === "note";
-    const k = e.key.toLowerCase();
-    // the same verdict keys work everywhere: with Alt while typing, bare elsewhere
-    const verdict = (inText && e.altKey && !e.ctrlKey && !e.metaKey) || (!inText && !e.altKey && !e.ctrlKey && !e.metaKey);
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); save(); return; }
-    if (inText && e.key === "Enter" && !e.shiftKey && !e.altKey) { e.preventDefault(); save(); return; }
-    if (inText && e.key === "Escape") { e.target.blur(); return; }
-    if (!verdict) return;
+    if (e.ctrlKey || e.metaKey || e.altKey || !state.current) return;
     const act = {
-      p: togglePlay,
-      r: () => { audio.currentTime = 0; audio.play().catch(() => {}); },
-      n: () => quick({ noSpeech: true, exclude: false }),
-      x: () => quick({ exclude: true }),
-      u: () => { editDraft({ unsure: !draftFor(state.current).unsure }); fillForm(state.current); },
-    }[k] || (/^[1-9]$/.test(e.key) ? () => useHyp(Number(e.key)) : null);
-    if (act) { e.preventDefault(); act(); return; }
-    if (inText) return;
-    if (e.key === " " && state.current && e.target.tagName !== "BUTTON") { e.preventDefault(); togglePlay(); }
-    else if (k === "j") step(1);
-    else if (k === "k") step(-1);
-    else if (k === "e" || e.key === "Enter") { e.preventDefault(); $("reference").focus(); }
+      "Enter": accept,
+      " ": togglePlay,
+      "r": replay,
+      "e": startEditing,
+      "n": noSpeech,
+      "u": unsure,
+      "x": leaveOut,
+      "c": () => $("note").focus(),
+      "ArrowDown": () => step(1),
+      "ArrowUp": () => step(-1),
+      "j": () => step(1),
+      "k": () => step(-1),
+    }[e.key.length === 1 ? e.key.toLowerCase() : e.key] || (/^[1-9]$/.test(e.key) ? () => useHyp(Number(e.key)) : null);
+    if (!act) return;
+    e.preventDefault();
+    act();
   });
 
   // ---- data: new recordings appear without a reload ----
@@ -657,7 +683,7 @@
     renderQueue();
     if (state.current && itemOf(state.current)) {
       renderHyps(itemOf(state.current));
-      fillForm(state.current);
+      renderForm();
     } else {
       selectFirstTodo();
     }
