@@ -33,7 +33,14 @@ from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, SpeechStream, earcon
-from vecta.server.talker import HOLDING_LINE, HOWTO_HINTS, LOOK_HINTS, Reply, Talker
+from vecta.server.talker import (
+    HOLDING_LINE,
+    HOWTO_HINTS,
+    INSTRUCTION_HINTS,
+    LOOK_HINTS,
+    Reply,
+    Talker,
+)
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -220,6 +227,7 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
         await _play(lv, pcm)
 
     voice = SpeechStream(tts, sink, lv.voices)
+    guard = _InstructionGuard(voice)
     try:
         if HOWTO_HINTS.search(text):
             # how-to questions belong to the main agent; don't let the talker improvise one
@@ -231,11 +239,16 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
             # obviously about the camera: skip the round trip where the talker asks to look
             lv.talker.heard(text)
             lv.talker.asked("look")
-            reply = await _look_and_answer(lv, text, voice.write, committed)
+            reply = await _look_and_answer(lv, text, guard, committed)
         else:
-            reply = await lv.talker.turn(text, voice.write)
+            reply = await lv.talker.turn(text, guard)
             if reply.tool == "look":
-                reply = await _look_and_answer(lv, text, voice.write, committed)
+                reply = await _look_and_answer(lv, text, guard, committed)
+        if guard.tripped:  # it started explaining how to operate something: that's ours
+            voice.drop_unsaid()
+            voice.write(" " + HOLDING_LINE)
+            reply = Reply(f"{guard.said} {HOLDING_LINE}".strip(), True, reply.latency_ms)
+            lv.talker.said(HOLDING_LINE)
         await committed.wait()
     except asyncio.CancelledError:
         voice.cancel()
@@ -261,6 +274,27 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
             latency_ms=reply.latency_ms,
             voice_to_voice_ms=v2v,
         )
+
+
+class _InstructionGuard:
+    """Sits between the talker's streaming text and the voice: once the reply turns into
+    instructions (press this, hold that), nothing more of it is spoken."""
+
+    def __init__(self, voice: SpeechStream) -> None:
+        self._voice = voice
+        self._text = ""
+        self.said = ""  # the part let through before it tripped
+        self.tripped = False
+
+    def __call__(self, delta: str) -> None:
+        if self.tripped:
+            return
+        self._text += delta
+        if INSTRUCTION_HINTS.search(self._text):
+            self.tripped = True
+            return
+        self.said = self._text
+        self._voice.write(delta)
 
 
 async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Event) -> Reply:

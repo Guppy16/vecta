@@ -29,6 +29,7 @@ from vecta.server.talker import (
     HISTORY_KEEP,
     HISTORY_MAX,
     HOWTO_HINTS,
+    INSTRUCTION_HINTS,
     LOOK_HINTS,
     ReplyExtractor,
     Talker,
@@ -317,3 +318,10 @@ def test_barge_in_stops_us_but_our_echo_does_not():
         assert barged == [True] and len(texts) == 1
 
     asyncio.run(run())
+
+
+def test_instruction_hints_catch_improvised_steps():
+    assert INSTRUCTION_HINTS.search("Step three is to press PROG, then use the minus button")
+    assert INSTRUCTION_HINTS.search("Hold both arrows for three seconds.")
+    assert not INSTRUCTION_HINTS.search("Yes, I can hear you. The display shows 22.5.")
+    assert not INSTRUCTION_HINTS.search("I see a white plug with a black cable.")

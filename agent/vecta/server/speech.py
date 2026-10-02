@@ -142,6 +142,10 @@ class SpeechStream:
     def cancel(self) -> None:
         self._task.cancel()
 
+    def drop_unsaid(self) -> None:
+        """Forget text not yet cut into a phrase (it will not be spoken)."""
+        self._splitter = PhraseSplitter()
+
     async def _run(self) -> None:
         try:
             await self._speak_queued()

@@ -50,6 +50,12 @@ HOWTO_HINTS = re.compile(
     re.I,
 )
 HOLDING_LINE = "Let me work that out properly, one moment."
+# backstop on the talker's own words: it tends to improvise steps when asked to read a guide
+INSTRUCTION_HINTS = re.compile(
+    r"\b(press|hold (down|it|both)|push|tap the|turn the|switch (it|the)|"
+    r"use the \w+ (button|arrow)s?|then (press|use|hold)|step (one|two|three|\d))\b",
+    re.I,
+)
 # server-side backstop: these utterances get the look tool even if the model forgets to ask
 LOOK_HINTS = re.compile(
     r"\b(see|seeing|look|looking|show|showing|display|screen|camera|in view|what is this|"
