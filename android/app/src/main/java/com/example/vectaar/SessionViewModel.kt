@@ -29,6 +29,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonElement
@@ -84,6 +85,7 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(UiState(sessionId = prefs.getString("session_id", null)))
     val state: StateFlow<UiState> = _state
     private var rtc: RtcClient? = null
+    private val foreground = MutableStateFlow(true)   // camera + mic run only while the app is visible
     private val tts = TtsPlayer(app)
     private var nextId = 1L
 
@@ -120,6 +122,9 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(deafened = deaf) }
     }
 
+    /** Off screen (backgrounded or screen off) = no camera, no mic: the connection is closed. */
+    fun setForeground(visible: Boolean) { foreground.value = visible }
+
     fun newTask() { _state.update { it.copy(task = null, phase = "idle") } }
 
     fun capturePhoto() {
@@ -134,6 +139,11 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun connectLoop() {
         var backoffMs = 1000L
         while (true) {
+            if (!foreground.value) {
+                _state.update { it.copy(connection = "paused") }
+                foreground.first { it }
+                backoffMs = 1000L
+            }
             val ended = CompletableDeferred<String>()
             val client = RtcClient(getApplication(), serverUrl, eglBase, object : RtcClient.Listener {
                 override fun onMessage(msg: Message) = handle(msg)
@@ -152,8 +162,11 @@ class SessionViewModel(app: Application) : AndroidViewModel(app) {
                 tts.routeToSpeaker()                            // WebRTC re-inits audio on connect; re-pin the route
                 backoffMs = 1000L
                 launch { onConnected(client) }
+                val leaving = viewModelScope.launch { foreground.first { !it }; ended.complete("background") }
                 val why = ended.await()
+                leaving.cancel()
                 Log.w("Session", "connection $why")
+                if (why == "background") continue   // closed on purpose; reconnect when visible again
             } catch (e: Exception) {
                 Log.e("Session", "connect failed: ${e.message}")
                 _state.update { it.copy(connection = "offline") }

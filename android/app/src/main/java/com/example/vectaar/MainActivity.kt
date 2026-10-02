@@ -21,6 +21,7 @@ import com.example.vectaar.ui.VectaScreen
 
 class MainActivity : ComponentActivity() {
     private var hasCamera by mutableStateOf(false)
+    private val vm: SessionViewModel by viewModels()
     private val askPermissions =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
             hasCamera = granted[Manifest.permission.CAMERA] == true   // mic is optional: no audio track if denied
@@ -37,13 +38,23 @@ class MainActivity : ComponentActivity() {
         if (missing.isNotEmpty()) askPermissions.launch(missing.toTypedArray())   // ask for whatever's missing
         setContent {
             if (hasCamera) {
-                val vm: SessionViewModel by viewModels()   // created only once we can open the camera
-                VectaScreen(vm)
+                VectaScreen(vm)   // the view model (and the camera) is created only once allowed
             } else {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("Camera permission required.")
                 }
             }
         }
+    }
+
+    // Backgrounded or screen off: stop streaming camera and mic, resume when visible again.
+    override fun onStart() {
+        super.onStart()
+        if (hasCamera) vm.setForeground(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (hasCamera) vm.setForeground(false)
     }
 }
