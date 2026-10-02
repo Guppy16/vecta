@@ -260,13 +260,15 @@ def test_recorder_and_labels(tmp_path: Path):
     app = FastAPI()
     app.include_router(labels.router(tmp_path))
     client = TestClient(app)
-    items = client.get("/label/items").json()
-    first = next(u for u in items if u["id"] == "u_0001")
-    assert first["text"] == "hello" and first["kind"] == "speech" and first["label"] is None
+    data = client.get("/label/items").json()
+    first = next(u for u in data["items"] if u["id"] == "u_0001")
+    assert first["hyps"][0]["text"] == "hello" and first["kind"] == "speech"
+    assert first["duration_s"] == 0.1 and len(first["peaks"]) == 300
     assert client.get("/label/audio/abcdef1/u_0001.wav").status_code == 200
     assert client.get("/label/audio/abcdef1/..%2Fx.wav").status_code == 404
-    body = {"session": "abcdef1", "id": "u_0001", "kind": "speech", "transcript": "hello there"}
+    body = {"session": "abcdef1", "id": "u_0001", "reference": "hello there"}
     assert client.post("/label", json=body).status_code == 200
-    assert client.post("/label", json={**body, "kind": "bogus"}).status_code == 400
-    labelled = next(u for u in client.get("/label/items").json() if u["id"] == "u_0001")
-    assert labelled["label"]["transcript"] == "hello there"
+    assert client.post("/label", json={"session": "abcdef1", "id": "u_0001"}).status_code == 400
+    assert client.post("/label", json={**body, "noSpeech": True}).json()["reference"] == ""
+    saved = client.get("/label/items").json()["labels"]
+    assert saved["abcdef1/u_0001"]["noSpeech"] is True  # last save wins

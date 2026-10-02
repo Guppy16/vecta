@@ -7,6 +7,7 @@ question needs the camera or real reasoning it says so and flags an escalation
 for the main agent, who reads the same inbox and replies through `vecta say`.
 """
 
+import base64
 import json
 import logging
 import os
@@ -21,16 +22,18 @@ log = logging.getLogger(__name__)
 
 PERSONA = (
     "You are Vecta's voice: a terse spoken assistant on the user's phone, helping with a "
-    "task in front of the camera. You CANNOT see. You know only the BRIEFING, the dialogue, "
-    "and tool results; you have no idea what the device looks like unless a tool result or the "
-    "briefing says so — never describe or invent device details, readings or labels. "
+    "task in front of the camera. You see only when a camera frame is attached to a message; "
+    "otherwise you know only the BRIEFING, the dialogue and earlier answers — never describe or "
+    "invent device details, readings or labels you have not seen. "
     "Reply in one or two short spoken sentences. Reply with an empty string when the user is "
     "not talking to you (background conversation, noise, half sentences). "
-    'Tool: to find out what the camera shows right now, answer exactly {"tool": "look"}; the '
-    "result arrives as a message starting with [tool look result]; then answer ONLY from it. "
-    "Any question about what is visible, what something looks like, or what is on a display "
-    "MUST start with that tool call. You are NOT the expert: you never explain how to operate, "
-    "set, program or fix a device, what a button or symbol does, or why something happens — "
+    'Tool: to see what the camera shows right now, answer exactly {"tool": "look"}; the frame '
+    "arrives in a message starting with [tool look result]. Any question about what is visible, "
+    "what something looks like, or what is on a display MUST start with that tool call unless a "
+    "frame is already attached. With a frame, answer what was asked in one short sentence "
+    "about the thing asked about; don't describe the whole scene. "
+    "You are NOT the expert: you never explain how to operate, set, program or fix a device, "
+    "what a button or symbol does, or why something happens — "
     "and you never offer to. For any such question reply with a short holding line "
     '(e.g. "Let me work that out properly, one moment.") and set escalate=true; the main agent '
     "answers. The briefing may contain steps the main agent wants relayed: those you may say. "
@@ -95,13 +98,31 @@ class Talker:
         self._push("user", f"[tool {tool} result] {result}")
         return await self._complete(on_text)
 
-    async def _complete(self, on_text: OnText | None) -> Reply:
+    async def look_result(self, jpeg: bytes, on_text: OnText | None = None) -> Reply:
+        """Answer the pending question from a camera frame. The frame goes to the model with
+        this one request only; the history keeps a text placeholder, so later turns stay small
+        and the cached prefix stays valid."""
+        self._push("user", "[tool look result] camera frame attached")
+        return await self._complete(on_text, image=jpeg)
+
+    async def _complete(self, on_text: OnText | None, image: bytes | None = None) -> Reply:
         """Streams the completion; `on_text` gets the spoken reply as it is written, so speech
         can start long before the JSON is finished."""
         t0 = time.monotonic()
+        messages = [{"role": "system", "content": self._system()}, *self.history]
+        if image is not None:
+            url = "data:image/jpeg;base64," + base64.b64encode(image).decode()
+            last = messages[-1]
+            messages[-1] = {
+                "role": last["role"],
+                "content": [
+                    {"type": "image_url", "image_url": {"url": url}},
+                    {"type": "text", "text": last["content"]},
+                ],
+            }
         stream = await self._client.chat.completions.create(
             model=self.model,
-            messages=[{"role": "system", "content": self._system()}, *self.history],
+            messages=messages,
             temperature=0.0,
             max_tokens=80,
             response_format={"type": "json_object"},

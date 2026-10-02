@@ -228,23 +228,26 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
 
 
 async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Event) -> Reply:
-    """The talker's one tool: caption the current frame, then let it answer from the caption."""
+    """The talker's one tool: it looks at the current frame itself (Qwen3.6 is multimodal)."""
     s = lv.peer.session
-    desc = await describe_view(s)
-    reply = await lv.talker.tool_result("look", desc, on_text)
+    frame = s.frames.latest()
+    if frame is None:
+        reply = await lv.talker.tool_result("look", "No camera frame has arrived yet.", on_text)
+        await committed.wait()
+        return reply
+    jpeg = await asyncio.to_thread(_jpeg_small, frame)
+    if await asyncio.to_thread(_brightness, jpeg) < 12:
+        reply = await lv.talker.tool_result("look", BLACK_FRAME, on_text)
+    else:
+        reply = await lv.talker.look_result(jpeg, on_text)
     await committed.wait()
-    s.inbox.append("tool", name="look", result=desc)
     # fast answer, slow verification: the main agent fact-checks every vision answer
-    # against the real frame and corrects out loud if the talker got it wrong
-    kf_dir = s.dir / "keyframes"
-    frames = sorted(kf_dir.glob("kf_*.jpg")) if kf_dir.is_dir() else []
-    s.inbox.append(
-        "verify",
-        question=text,
-        caption=desc,
-        answer=reply.text,
-        keyframe=str(frames[-1]) if frames else None,
-    )
+    # against the frame the talker saw and corrects out loud if it got it wrong
+    looks = s.dir / "looks"
+    looks.mkdir(exist_ok=True)
+    seen = looks / f"look_{int(time.time() * 1000)}.jpg"
+    seen.write_bytes(jpeg)
+    s.inbox.append("verify", question=text, answer=reply.text, frame=str(seen))
     return reply
 
 
@@ -255,6 +258,9 @@ def _since(epoch_s: float | None, mono_s: float | None) -> int | None:
     return int((mono_s - time.monotonic() + time.time() - epoch_s) * 1000)
 
 
+BLACK_FRAME = "The camera image is completely black: the lens is covered or the phone is face down."
+
+
 async def describe_view(s: Session) -> str:
     """What the camera shows right now, in a sentence — for the talker and `vecta look`."""
     frame = s.frames.latest()
@@ -263,9 +269,7 @@ async def describe_view(s: Session) -> str:
     jpeg = await asyncio.to_thread(_jpeg_small, frame)
     brightness = await asyncio.to_thread(_brightness, jpeg)
     if brightness < 12:
-        return (
-            "The camera image is completely black: the lens is covered or the phone is face down."
-        )
+        return BLACK_FRAME
     text = await vlm.answer(
         "Describe what is in view in one or two short sentences, naming any device, "
         "buttons, labels or display text you can read.",

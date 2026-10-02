@@ -1,22 +1,27 @@
-"""Labelling recorded utterances: a small page on the server for writing down what was
+"""Labelling recorded utterances: a page on the server (/label) for writing down what was
 really said, so ASR models can be benchmarked on our own voices and rooms.
 
-Recordings come from audio.Recorder (`data/sessions/<id>/utterances/`); labels go to
-`data/labels.jsonl`, one line per save (the last one for an utterance wins).
+Recordings come from audio.Recorder (`data/sessions/<id>/utterances/`). Other ASR runs can
+add their transcripts next to them in `utterances/hyps.jsonl` ({id, backend, text}); the
+page shows them beside the live Whisper result. Labels go to `data/labels.jsonl`, one line
+per save; the last line for an utterance wins.
 """
 
 import json
 import re
 import time
+import wave
+from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 PAGE = Path(__file__).parent / "static" / "label.html"
-KINDS = {"speech", "not_speech", "not_for_agent", "unclear"}
-_ID = re.compile(r"^[A-Za-z0-9_-]{6,32}$")
-_UTT = re.compile(r"^u_\d{4}$")
+PEAK_BINS = 300
+_SID = re.compile(r"^[A-Za-z0-9_-]{6,32}$")
+_UID = re.compile(r"^u_\d{4}$")
 
 
 def router(data_dir: Path) -> APIRouter:
@@ -28,18 +33,35 @@ def router(data_dir: Path) -> APIRouter:
         return FileResponse(PAGE)
 
     @r.get("/label/items")
-    async def items() -> list[dict]:
-        labels = _read_labels(labels_file)
+    async def items() -> dict:
         out = []
-        for meta_file in (data_dir / "sessions").glob("*/utterances/utterances.jsonl"):
-            sid = meta_file.parent.parent.name
+        for meta_file in sorted((data_dir / "sessions").glob("*/utterances/utterances.jsonl")):
+            sid, udir = meta_file.parent.parent.name, meta_file.parent
+            hyps = _hyps(udir / "hyps.jsonl")
             for uid, meta in _merge(meta_file).items():
-                out.append({"session": sid, **meta, "label": labels.get((sid, uid))})
-        return sorted(out, key=lambda u: u.get("started", 0), reverse=True)
+                wav = udir / f"{uid}.wav"
+                if not wav.is_file():
+                    continue
+                duration, peaks = _peaks(wav, wav.stat().st_mtime)
+                live = [{"backend": "whisper-base (live)", "text": meta.get("text"), "live": True}]
+                out.append(
+                    {
+                        "key": f"{sid}/{uid}",
+                        "session": sid,
+                        "id": uid,
+                        "started": meta.get("started"),
+                        "kind": meta.get("kind", "speech"),
+                        "duration_s": duration,
+                        "peaks": peaks,
+                        "hyps": live + hyps.get(uid, []),
+                    }
+                )
+        out.sort(key=lambda u: u.get("started") or 0)
+        return {"items": out, "labels": _labels(labels_file)}
 
     @r.get("/label/audio/{sid}/{uid}.wav")
     async def audio(sid: str, uid: str) -> FileResponse:
-        if not (_ID.match(sid) and _UTT.match(uid)):
+        if not (_SID.match(sid) and _UID.match(uid)):
             raise HTTPException(404)
         file = data_dir / "sessions" / sid / "utterances" / f"{uid}.wav"
         if not file.is_file():
@@ -48,19 +70,24 @@ def router(data_dir: Path) -> APIRouter:
 
     @r.post("/label")
     async def save(body: dict) -> dict:
-        sid, uid, kind = body.get("session", ""), body.get("id", ""), body.get("kind", "")
-        if not (_ID.match(sid) and _UTT.match(uid)) or kind not in KINDS:
-            raise HTTPException(400, "bad session, id or kind")
-        line = {
+        sid, uid = body.get("session", ""), body.get("id", "")
+        if not (_SID.match(sid) and _UID.match(uid)):
+            raise HTTPException(400, "bad session or id")
+        label = {
             "session": sid,
             "id": uid,
-            "kind": kind,
-            "transcript": str(body.get("transcript", "")).strip(),
-            "ts": round(time.time(), 3),
+            "reference": "" if body.get("noSpeech") else str(body.get("reference", "")).strip(),
+            "noSpeech": bool(body.get("noSpeech")),
+            "unsure": bool(body.get("unsure")),
+            "exclude": bool(body.get("exclude")),
+            "note": str(body.get("note", "")).strip(),
+            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         }
+        if not (label["reference"] or label["noSpeech"] or label["exclude"] or label["note"]):
+            raise HTTPException(400, "write what was said, tick an option, or leave a comment")
         with labels_file.open("a") as f:
-            f.write(json.dumps(line) + "\n")
-        return line
+            f.write(json.dumps(label) + "\n")
+        return label
 
     return r
 
@@ -74,11 +101,35 @@ def _merge(meta_file: Path) -> dict[str, dict]:
     return merged
 
 
-def _read_labels(file: Path) -> dict[tuple[str, str], dict]:
-    if not file.is_file():
-        return {}
-    labels = {}
-    for line in file.read_text().splitlines():
-        rec = json.loads(line)
-        labels[(rec["session"], rec["id"])] = rec
+def _hyps(file: Path) -> dict[str, list[dict]]:
+    by_id: dict[str, list[dict]] = {}
+    if file.is_file():
+        for line in file.read_text().splitlines():
+            rec = json.loads(line)
+            hyp = {"backend": rec["backend"], "text": rec.get("text")}
+            by_id.setdefault(rec["id"], []).append(hyp)
+    return by_id
+
+
+def _labels(file: Path) -> dict[str, dict]:
+    labels: dict[str, dict] = {}
+    if file.is_file():
+        for line in file.read_text().splitlines():
+            rec = json.loads(line)
+            labels[f"{rec['session']}/{rec['id']}"] = rec
     return labels
+
+
+@lru_cache(maxsize=4096)
+def _peaks(wav: Path, mtime: float) -> tuple[float, list[int]]:
+    """Duration and PEAK_BINS max-abs peaks (0..100, normalised per clip) for the waveform;
+    `mtime` is only part of the cache key."""
+    with wave.open(str(wav)) as w:
+        rate, pcm = w.getframerate(), w.readframes(w.getnframes())
+    a = np.abs(np.frombuffer(pcm, dtype=np.int16).astype(np.int32))
+    if not a.size:
+        return 0.0, []
+    bins = np.array_split(a, min(PEAK_BINS, a.size))
+    peaks = np.array([b.max() for b in bins], dtype=float)
+    peaks = np.round(peaks / max(peaks.max(), 1) * 100).astype(int)
+    return round(a.size / rate, 2), peaks.tolist()

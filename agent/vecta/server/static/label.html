@@ -3,142 +3,554 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vecta labels</title>
+<title>Vecta Voice Labels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
+  /* Dark first, like the app; data-theme="light" on <html> gives the light palette. */
   :root {
-    --bg: #0e0f11; --card: #17191c; --line: #26292e; --text: #e8e9eb; --dim: #8b9099;
-    --accent: #46c46a; --warn: #e0a43a; --bad: #e0605a;
+    --ground: #0D1311; --surface: #141C19; --sunken: #101714; --ink: #E3ECE8; --muted: #8E9E98;
+    --line: #25302C; --accent: #37C29F; --accent-ink: #06231B; --accent-soft: #13352B;
+    --wave: #3E5049; --warn: #F0B45C; --warn-soft: #3A2A10; --danger: #F2877E; --mark: #5A4A12;
+    --focus: #37C29F;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --cond: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --ground: #EEF1F0; --surface: #FFFFFF; --sunken: #F5F7F6; --ink: #14201C; --muted: #5B6964;
+    --line: #D5DDDA; --accent: #0B7A62; --accent-ink: #FFFFFF; --accent-soft: #D9F0E8;
+    --wave: #A9BBB5; --warn: #8F5400; --warn-soft: #FBEBD1; --danger: #A8261C; --mark: #FFE7A3;
+    --focus: #0B7A62;
+    color-scheme: light;
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text);
-         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line);
-           padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 600; }
-  .tabs button { background: none; border: 1px solid var(--line); color: var(--dim);
-                 padding: 6px 12px; border-radius: 999px; cursor: pointer; font: inherit; }
-  .tabs button.on { color: var(--text); border-color: var(--text); }
-  .hint { color: var(--dim); font-size: 13px; width: 100%; }
-  main { max-width: 760px; margin: 0 auto; padding: 12px 16px 80px; }
-  .u { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
-       padding: 12px; margin-bottom: 10px; }
-  .u.focus { border-color: var(--accent); }
-  .u.done { opacity: .55; }
-  .row { display: flex; gap: 8px; align-items: center; }
-  .play { flex: none; width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
-          background: var(--accent); color: #0e0f11; font-size: 16px; }
-  .meta { color: var(--dim); font-size: 12px; }
-  .asr { color: var(--dim); margin: 8px 0 6px; font-style: italic; overflow-wrap: anywhere; }
-  input[type=text] { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line);
-                     border-radius: 8px; padding: 9px 10px; font: inherit; }
-  input[type=text]:focus { outline: none; border-color: var(--accent); }
-  .kinds { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
-  .kinds button { background: none; border: 1px solid var(--line); color: var(--dim); border-radius: 8px;
-                  padding: 6px 10px; cursor: pointer; font: inherit; font-size: 13px; }
-  .kinds button.on { color: var(--text); border-color: var(--accent); }
-  .badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); }
-  .badge.too_short { color: var(--warn); } .badge.ours { color: var(--bad); }
-  .empty { color: var(--dim); text-align: center; padding: 40px 0; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans);
+         font-size: 14px; line-height: 1.5; padding: 20px 16px 40px; }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .mono { font-family: var(--mono); font-size: 0.92em; }
+
+  .app { max-width: 1180px; margin-inline: auto; display: grid; gap: 16px; }
+  .top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+  .top h1 { font-family: var(--cond); font-weight: 600; font-size: 26px; line-height: 1.1; margin: 0; }
+  .top p { margin: 4px 0 0; color: var(--muted); max-width: 62ch; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stat { display: grid; padding: 6px 12px; background: var(--surface); border: 1px solid var(--line);
+          border-radius: 6px; min-width: 92px; }
+  .stat b { font-family: var(--mono); font-weight: 500; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stat span { font-family: var(--cond); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+  .banner { padding: 10px 14px; border-radius: 6px; background: var(--warn-soft); color: var(--warn);
+            border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+
+  .grid { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 780px) { .grid { grid-template-columns: minmax(0, 1fr); } .queue ol { max-height: 34vh; } }
+  .label { font-family: var(--cond); font-weight: 600; font-size: 11px; text-transform: uppercase;
+           letter-spacing: 0.08em; color: var(--muted); }
+
+  .queue { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .queue-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .queue ol { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
+  .item-btn { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 4px 10px;
+              align-items: center; padding: 10px 14px; background: none; border: 0;
+              border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+  .queue li:last-child .item-btn { border-bottom: 0; }
+  .item-btn:hover { background: var(--sunken); }
+  .item-btn[aria-current="true"] { background: var(--accent-soft); }
+  .item-btn .id { font-family: var(--mono); font-size: 12px; }
+  .item-btn .dur { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .item-btn .said { grid-column: 2 / 4; color: var(--muted); font-size: 12.5px; overflow: hidden;
+                    text-overflow: ellipsis; white-space: nowrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--muted); }
+  .dot.done { background: var(--accent); border-color: var(--accent); }
+  .dot.unsure { background: var(--warn); border-color: var(--warn); }
+  .dot.flagged { background: none; border: 3px solid var(--danger); }
+
+  .bench { display: grid; gap: 12px; min-width: 0; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px;
+           display: grid; gap: 12px; min-width: 0; }
+  .item-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+  .item-meta h2 { font-family: var(--mono); font-weight: 500; font-size: 16px; margin: 0; overflow-wrap: anywhere; }
+  .item-meta .kv { color: var(--muted); font-size: 12.5px; }
+  .item-meta .kv .mono { color: var(--ink); }
+  .kind { font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); }
+
+  .player { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; align-items: center; }
+  .play { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent);
+          color: var(--accent-ink); cursor: pointer; display: grid; place-items: center; }
+  .play svg { width: 18px; height: 18px; fill: currentColor; }
+  .wave-wrap { display: grid; gap: 4px; min-width: 0; }
+  canvas.wave { width: 100%; height: 84px; display: block; cursor: pointer; background: var(--sunken); border-radius: 6px; }
+  .wave-foot { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11.5px;
+               color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .hyps { display: grid; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .hyp { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+         padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .hyp:last-child { border-bottom: 0; }
+  .hyp.live { background: var(--sunken); }
+  .hyp .who { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .hyp.live .who { color: var(--ink); font-weight: 500; }
+  .hyp .text { overflow-wrap: anywhere; }
+  .hyp .text.none { color: var(--muted); font-style: italic; }
+  .hyp mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
+  .use { border: 1px solid var(--line); background: var(--surface); border-radius: 5px; padding: 3px 10px;
+         font-size: 12.5px; cursor: pointer; }
+  .use:hover { border-color: var(--accent); color: var(--accent); }
+  @media (max-width: 560px) { .hyp { grid-template-columns: minmax(0, 1fr) auto; } .hyp .who { grid-column: 1 / 3; } }
+
+  .form { display: grid; gap: 10px; }
+  .form label.field { display: grid; gap: 6px; }
+  textarea#reference { width: 100%; min-height: 72px; resize: vertical; padding: 10px 12px;
+                       border: 1px solid var(--line); border-radius: 6px; background: var(--surface); font-size: 15px; }
+  textarea#reference:disabled { background: var(--sunken); color: var(--muted); }
+  input#note { width: 100%; padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+  .checks { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+  .checks label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+  .checks input { accent-color: var(--accent); width: 16px; height: 16px; }
+  .derived { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-height: 24px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px;
+          font-size: 12px; font-weight: 500; border: 1px solid var(--line); color: var(--muted); }
+  .chip.yes { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+  .save { border: 0; border-radius: 6px; background: var(--accent); color: var(--accent-ink); font-weight: 600;
+          padding: 9px 18px; cursor: pointer; }
+  .save:disabled { opacity: 0.5; cursor: default; }
+  .status { font-size: 13px; color: var(--muted); }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--accent); }
+  .keys { color: var(--muted); font-size: 12px; }
+  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px;
+        border-radius: 4px; padding: 0 5px; background: var(--surface); }
+  .empty { padding: 32px 16px; text-align: center; color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
-<header>
-  <h1>Utterances <span id="count" class="meta"></span></h1>
-  <div class="tabs"><button data-f="todo" class="on">To label</button> <button data-f="all">All</button></div>
-  <div class="hint">Play, fix the text to what was really said, Enter saves and plays the next.
-    Mark noise, speech not meant for the agent, or unclear audio with the buttons.</div>
-</header>
-<main id="list"></main>
-<audio id="player"></audio>
-<script>
-const KINDS = [["speech", "Speech"], ["not_for_agent", "Not for agent"], ["not_speech", "Noise"], ["unclear", "Unclear"]];
-let items = [], filter = "todo";
-const player = document.getElementById("player");
-const key = u => `${u.session}/${u.id}`;
-const audioUrl = u => `/label/audio/${u.session}/${u.id}.wav`;
-
-async function load() {
-  items = await (await fetch("/label/items")).json();
-  render();
-}
-
-function visible() { return items.filter(u => filter === "all" || !u.label); }
-
-function render() {
-  const list = document.getElementById("list");
-  const shown = visible();
-  document.getElementById("count").textContent =
-    `${items.filter(u => u.label).length} of ${items.length} labelled`;
-  list.replaceChildren();
-  if (!shown.length) { list.innerHTML = '<div class="empty">Nothing left to label.</div>'; return; }
-  for (const u of shown) list.append(card(u));
-}
-
-function card(u) {
-  const el = document.createElement("div");
-  el.className = "u" + (u.label ? " done" : "");
-  el.dataset.key = key(u);
-  const secs = u.voiced_ms ? (u.voiced_ms / 1000).toFixed(1) + " s voiced" : "";
-  const when = u.started ? new Date(u.started * 1000).toLocaleString() : "";
-  const label = u.label || {};
-  el.innerHTML = `
-    <div class="row">
-      <button class="play" title="Play">▶</button>
-      <div class="meta">${when} · ${secs} ${u.kind && u.kind !== "speech" ? `<span class="badge ${u.kind}">${u.kind.replace("_", " ")}</span>` : ""}</div>
+<div class="app">
+  <header class="top">
+    <div>
+      <h1>Vecta Voice Labels</h1>
+      <p>Every utterance the phone's microphone picked up. Listen and write what was actually said.
+        Labels are saved on the box and used to score speech recognition models.</p>
     </div>
-    <div class="asr"></div>
-    <input type="text" placeholder="What was said">
-    <div class="kinds"></div>`;
-  el.querySelector(".asr").textContent = u.text != null ? `Whisper: ${u.text || "(nothing)"}` : "Whisper: (not transcribed)";
-  const input = el.querySelector("input");
-  input.value = label.transcript ?? (u.text || "");
-  el.querySelector(".play").onclick = () => play(u, el);
-  input.onfocus = () => focus(el);
-  input.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); save(u, el, "speech"); } };
-  for (const [kind, name] of KINDS) {
-    const b = document.createElement("button");
-    b.textContent = name;
-    if (label.kind === kind) b.className = "on";
-    b.onclick = () => save(u, el, kind);
-    el.querySelector(".kinds").append(b);
+    <div class="stats" id="stats" aria-live="polite"></div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="grid">
+    <nav class="queue" aria-label="Recorded utterances">
+      <div class="queue-head"><span class="label">Utterances</span><span class="label" id="queue-count"></span></div>
+      <ol id="queue"></ol>
+    </nav>
+
+    <section class="bench" aria-live="polite">
+      <div class="panel empty" id="bench-empty">No recordings yet. Talk to the app and they appear here.</div>
+
+      <div class="panel" id="bench-audio" hidden>
+        <div class="item-meta">
+          <h2 id="item-id"></h2>
+          <span class="kv">session <span class="mono" id="item-session"></span></span>
+          <span class="kv">recorded <span class="mono" id="item-when"></span></span>
+          <span class="kv">length <span class="mono" id="item-dur"></span></span>
+          <span class="kind" id="item-kind" hidden></span>
+        </div>
+        <div class="player">
+          <button type="button" class="play" id="play" aria-label="Play">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path id="play-icon" d="M7 4.5v15l13-7.5z"/></svg>
+          </button>
+          <div class="wave-wrap">
+            <canvas class="wave" id="wave" aria-label="Waveform; click to seek"></canvas>
+            <div class="wave-foot"><span id="t-now">0:00.0</span><span id="t-end">0:00.0</span></div>
+          </div>
+        </div>
+        <audio id="audio" preload="auto"></audio>
+      </div>
+
+      <div class="panel" id="bench-hyps" hidden>
+        <span class="label">What each model heard</span>
+        <div class="hyps" id="hyps"></div>
+      </div>
+
+      <div class="panel form" id="bench-form" hidden>
+        <label class="field" for="reference">
+          <span class="label">What was actually said</span>
+          <textarea id="reference" placeholder="Type the words exactly as spoken, e.g. Can you tell me some details about this plug?"></textarea>
+        </label>
+        <div class="derived" id="derived"></div>
+        <div class="checks">
+          <label for="no-speech"><input type="checkbox" id="no-speech"> No speech (noise only)</label>
+          <label for="unsure"><input type="checkbox" id="unsure"> Unsure, needs another listen</label>
+          <label for="exclude"><input type="checkbox" id="exclude"> Not worth keeping</label>
+        </div>
+        <label class="field" for="note">
+          <span class="label">Comment for Claude (optional)</span>
+          <input id="note" type="text" placeholder="e.g. talking to someone else, not the app. A comment alone leaves it unlabelled.">
+        </label>
+        <div class="actions">
+          <button type="button" class="save" id="save">Save and next</button>
+          <span class="status" id="status"></span>
+        </div>
+        <div class="keys"><kbd>Space</kbd> play &nbsp; <kbd>J</kbd><kbd>K</kbd> next / previous &nbsp; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> save</div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const KIND_NOTES = {
+    too_short: "Too short: never transcribed",
+    ours: "Started while the app was talking: ignored as its own voice",
+  };
+  const state = { items: [], labels: {}, drafts: {}, current: null };
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") node.className = v;
+      else if (k === "text") node.textContent = v;
+      else if (v !== null && v !== undefined) node.setAttribute(k, v);
+    }
+    for (const c of [].concat(children)) if (c) node.append(c);
+    return node;
   }
-  return el;
-}
 
-function focus(el) {
-  document.querySelectorAll(".u.focus").forEach(x => x.classList.remove("focus"));
-  el.classList.add("focus");
-}
-
-function play(u, el) {
-  focus(el);
-  player.src = audioUrl(u);
-  player.play();
-}
-
-async function save(u, el, kind) {
-  const transcript = kind === "speech" || kind === "not_for_agent" ? el.querySelector("input").value : "";
-  const res = await fetch("/label", { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: u.session, id: u.id, kind, transcript }) });
-  if (!res.ok) { alert("save failed: " + res.status); return; }
-  u.label = await res.json();
-  const next = el.nextElementSibling;
-  if (filter === "todo") el.remove(); else el.replaceWith(card(u));
-  document.getElementById("count").textContent =
-    `${items.filter(x => x.label).length} of ${items.length} labelled`;
-  if (next && next.classList.contains("u")) {
-    const nu = items.find(x => key(x) === next.dataset.key);
-    next.querySelector("input").focus();
-    if (nu) play(nu, next);
+  function fmt(t) {
+    if (!isFinite(t)) t = 0;
+    const m = Math.floor(t / 60);
+    return `${m}:${(t - m * 60).toFixed(1).padStart(4, "0")}`;
   }
-}
 
-document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
-  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
-  filter = b.dataset.f;
-  render();
-});
-load();
+  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
+  const itemOf = (key) => state.items.find((u) => u.key === key);
+  const liveText = (u) => (u.hyps.find((h) => h.live) || {}).text;
+
+  function statusOf(key) {
+    const l = state.labels[key];
+    if (!l) return "todo";
+    if (l.exclude) return "done";
+    if (l.unsure) return "unsure";
+    if (l.noSpeech || (l.reference || "").trim()) return "done";
+    if ((l.note || "").trim()) return "flagged";
+    return "todo";
+  }
+
+  // Unsaved edits win over the stored label, so a refresh never wipes what is being typed.
+  function draftFor(key) {
+    if (state.drafts[key]) return state.drafts[key];
+    const l = state.labels[key] || {};
+    return { reference: l.reference || "", noSpeech: !!l.noSpeech, unsure: !!l.unsure,
+             exclude: !!l.exclude, note: l.note || "", dirty: false };
+  }
+
+  function renderStats() {
+    const n = state.items.length;
+    let done = 0, right = 0, speech = 0, noise = 0, unsure = 0, excluded = 0, flagged = 0;
+    for (const u of state.items) {
+      const l = state.labels[u.key];
+      const s = statusOf(u.key);
+      if (s === "done") done++;
+      if (s === "unsure") unsure++;
+      if (s === "flagged") flagged++;
+      if (l && l.noSpeech && !l.exclude) noise++;
+      if (l && l.exclude) excluded++;
+      if (l && !l.noSpeech && !l.exclude && (l.reference || "").trim()) {
+        speech++;
+        if (norm(l.reference) === norm(liveText(u))) right++;
+      }
+    }
+    const stat = (value, label) => el("div", { class: "stat" }, [el("b", { text: String(value) }), el("span", { text: label })]);
+    $("stats").replaceChildren(
+      stat(`${done}/${n}`, "labelled"),
+      stat(speech ? `${right}/${speech}` : "–", "whisper exact"),
+      stat(noise, "no speech"),
+      stat(unsure, "unsure"),
+      stat(excluded, "left out"),
+      stat(flagged, "comments"),
+    );
+    $("queue-count").textContent = n ? `${done} of ${n} done` : "";
+  }
+
+  function renderQueue() {
+    const list = $("queue");
+    if (!state.items.length) {
+      list.replaceChildren(el("li", { class: "empty", text: "No recordings yet." }));
+      return;
+    }
+    const keepScroll = list.scrollTop;
+    list.replaceChildren(...state.items.map((u) => {
+      const l = state.labels[u.key];
+      const s = statusOf(u.key);
+      const labelled = l && (l.reference || l.noSpeech || l.exclude);
+      const said = l && l.exclude ? "Left out" : l && l.noSpeech ? "No speech" : (l && l.reference) || "";
+      const preview = s === "flagged" ? `Comment: ${l.note.trim()}`
+        : labelled ? `✓ ${said}`
+        : u.kind === "too_short" ? "too short, not transcribed"
+        : u.kind === "ours" ? "ignored as the app's voice"
+        : `whisper: ${liveText(u) ?? ""}`;
+      const btn = el("button", {
+        type: "button",
+        class: "item-btn",
+        "aria-current": String(u.key === state.current),
+        "aria-label": `Utterance ${u.id}, ${s === "done" ? "labelled" : s === "unsure" ? "unsure" : s === "flagged" ? "has a comment, not labelled" : "not labelled"}`,
+      }, [
+        el("span", { class: `dot ${s === "todo" ? "" : s}`, "aria-hidden": "true" }),
+        el("span", { class: "id", text: `${u.session.slice(0, 4)}·${u.id}` }),
+        el("span", { class: "dur", text: `${Number(u.duration_s).toFixed(1)} s` }),
+        el("span", { class: "said", text: preview }),
+      ]);
+      btn.addEventListener("click", () => select(u.key));
+      return el("li", {}, btn);
+    }));
+    list.scrollTop = keepScroll;
+  }
+
+  function renderHyps(u) {
+    $("hyps").replaceChildren(...u.hyps.map((h) => {
+      const has = typeof h.text === "string" && h.text.length > 0;
+      const text = el("span", { class: has ? "text" : "text none", text: has ? h.text : h.text === "" ? "(empty)" : "(no result)" });
+      const use = has ? el("button", { type: "button", class: "use", text: "Use" }) : el("span");
+      if (has) use.addEventListener("click", () => {
+        state.drafts[u.key] = { ...draftFor(u.key), reference: h.text, noSpeech: false, dirty: true };
+        fillForm(u.key);
+        $("reference").focus();
+      });
+      return el("div", { class: h.live ? "hyp live" : "hyp" }, [el("span", { class: "who", text: h.backend }), text, use]);
+    }));
+  }
+
+  function renderDerived(key) {
+    const d = draftFor(key);
+    const u = itemOf(key);
+    const chips = [];
+    if (d.exclude) chips.push(el("span", { class: "chip warn", text: "Left out of the test set" }));
+    else if (d.noSpeech) chips.push(el("span", { class: "chip", text: "No speech: a model that writes words here is hallucinating" }));
+    else if (!d.reference.trim() && d.note.trim()) chips.push(el("span", { class: "chip warn", text: "Comment only: not counted as labelled" }));
+    else if (!d.reference.trim()) chips.push(el("span", { class: "chip", text: "Not labelled yet" }));
+    else chips.push(u && norm(d.reference) === norm(liveText(u))
+      ? el("span", { class: "chip yes", text: "Whisper got it exactly" })
+      : el("span", { class: "chip", text: "Differs from Whisper: counts as a recognition error" }));
+    if (d.unsure) chips.push(el("span", { class: "chip warn", text: "Unsure" }));
+    if (d.dirty) chips.push(el("span", { class: "chip warn", text: "Unsaved" }));
+    $("derived").replaceChildren(...chips);
+  }
+
+  function fillForm(key) {
+    const d = draftFor(key);
+    const ref = $("reference");
+    if (ref.value !== d.reference) ref.value = d.reference;
+    ref.disabled = d.noSpeech || d.exclude;
+    $("no-speech").checked = d.noSpeech;
+    $("unsure").checked = d.unsure;
+    $("exclude").checked = d.exclude;
+    if ($("note").value !== d.note) $("note").value = d.note;
+    renderDerived(key);
+  }
+
+  function editDraft(patch) {
+    if (!state.current) return;
+    state.drafts[state.current] = { ...draftFor(state.current), ...patch, dirty: true };
+    renderDerived(state.current);
+    setStatus("");
+  }
+
+  function setStatus(text, kind = "") {
+    $("status").textContent = text;
+    $("status").className = `status ${kind}`;
+  }
+
+  // ---- audio + waveform ----
+  const audio = $("audio");
+  const canvas = $("wave");
+  let raf = 0;
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function drawWave() {
+    const u = itemOf(state.current);
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const peaks = (u && u.peaks) || [];
+    const duration = (u && Number(u.duration_s)) || audio.duration || 0;
+    const progress = duration ? Math.min(audio.currentTime / duration, 1) : 0;
+    const waveColor = cssVar("--wave"), playedColor = cssVar("--accent");
+    ctx.fillStyle = cssVar("--line");  // one tick per second
+    for (let s = 1; s < duration; s += 1) ctx.fillRect(Math.round((s / duration) * w) + 0.5, 0, 1, h);
+    const mid = h / 2, n = peaks.length;
+    if (n) {
+      const bw = w / n;
+      for (let i = 0; i < n; i++) {
+        const amp = Math.max(peaks[i] / 100, 0.012) * (h / 2 - 4);
+        ctx.fillStyle = (i + 0.5) / n <= progress ? playedColor : waveColor;
+        ctx.fillRect(i * bw, mid - amp, Math.max(bw - 1, 1), amp * 2);
+      }
+    }
+    ctx.fillStyle = playedColor;
+    ctx.fillRect(Math.round(progress * w), 0, 2, h);
+    $("t-now").textContent = fmt(audio.currentTime);
+    $("t-end").textContent = fmt(duration);
+  }
+
+  function loop() { drawWave(); if (!audio.paused) raf = requestAnimationFrame(loop); }
+
+  function setPlayIcon() {
+    const playing = !audio.paused;
+    $("play-icon").setAttribute("d", playing ? "M6 4.5h4v15H6zM14 4.5h4v15h-4z" : "M7 4.5v15l13-7.5z");
+    $("play").setAttribute("aria-label", playing ? "Pause" : "Play");
+  }
+
+  const togglePlay = () => (audio.paused ? audio.play().catch(() => {}) : audio.pause());
+  audio.addEventListener("play", () => { setPlayIcon(); cancelAnimationFrame(raf); loop(); });
+  audio.addEventListener("pause", () => { setPlayIcon(); drawWave(); });
+  audio.addEventListener("ended", () => { setPlayIcon(); drawWave(); });
+  audio.addEventListener("seeked", drawWave);
+  audio.addEventListener("loadedmetadata", drawWave);
+  audio.addEventListener("error", () => { if (state.current) setStatus("This recording didn't load.", "err"); });
+  $("play").addEventListener("click", togglePlay);
+  canvas.addEventListener("click", (e) => {
+    const u = itemOf(state.current);
+    const duration = (u && Number(u.duration_s)) || audio.duration;
+    if (!duration) return;
+    const r = canvas.getBoundingClientRect();
+    audio.currentTime = Math.max(0, Math.min(((e.clientX - r.left) / r.width) * duration, duration - 0.05));
+    drawWave();
+  });
+  new ResizeObserver(drawWave).observe(canvas);
+  new MutationObserver(drawWave).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // ---- selection ----
+  function select(key, autoplay = false) {
+    const u = itemOf(key);
+    if (!u) return;
+    const changed = state.current !== key;
+    state.current = key;
+    for (const id of ["bench-audio", "bench-hyps", "bench-form"]) $(id).hidden = false;
+    $("bench-empty").hidden = true;
+    $("item-id").textContent = u.id;
+    $("item-session").textContent = u.session;
+    $("item-when").textContent = u.started ? new Date(u.started * 1000).toLocaleString() : "–";
+    $("item-dur").textContent = `${Number(u.duration_s).toFixed(2)} s`;
+    $("item-kind").hidden = !KIND_NOTES[u.kind];
+    $("item-kind").textContent = KIND_NOTES[u.kind] || "";
+    renderHyps(u);
+    fillForm(key);
+    renderQueue();
+    if (changed) {
+      audio.pause();
+      setStatus("");
+      audio.src = `/label/audio/${u.session}/${u.id}.wav`;
+      drawWave();
+      if (autoplay) audio.play().catch(() => {});
+    }
+  }
+
+  function step(delta) {
+    const i = state.items.findIndex((u) => u.key === state.current);
+    const next = state.items[Math.max(0, Math.min(state.items.length - 1, i + delta))];
+    if (next) select(next.key);
+  }
+
+  // ---- form ----
+  $("reference").addEventListener("input", (e) => editDraft({ reference: e.target.value }));
+  $("note").addEventListener("input", (e) => editDraft({ note: e.target.value }));
+  $("unsure").addEventListener("change", (e) => editDraft({ unsure: e.target.checked }));
+  $("no-speech").addEventListener("change", (e) => {
+    editDraft({ noSpeech: e.target.checked });
+    $("reference").disabled = e.target.checked || $("exclude").checked;
+  });
+  $("exclude").addEventListener("change", (e) => {
+    editDraft({ exclude: e.target.checked });
+    $("reference").disabled = e.target.checked || $("no-speech").checked;
+  });
+
+  async function save() {
+    const key = state.current;
+    const u = itemOf(key);
+    if (!u) return;
+    const d = draftFor(key);
+    if (!d.noSpeech && !d.exclude && !d.reference.trim() && !d.note.trim()) {
+      setStatus("Write what was said, tick an option, or leave a comment.", "err");
+      $("reference").focus();
+      return;
+    }
+    $("save").disabled = true;
+    setStatus("Saving…");
+    try {
+      const res = await fetch("/label", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ session: u.session, id: u.id, reference: d.reference, noSpeech: d.noSpeech,
+                               unsure: d.unsure, exclude: d.exclude, note: d.note }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
+      state.labels[key] = await res.json();
+      delete state.drafts[key];
+      const l = state.labels[key];
+      setStatus(!l.reference && !l.noSpeech && !l.exclude ? "Comment saved. The utterance stays unlabelled." : "Saved", "ok");
+      renderStats();
+      renderQueue();
+      const i = state.items.findIndex((x) => x.key === key);
+      const next = state.items.slice(i + 1).concat(state.items.slice(0, i))
+        .find((x) => statusOf(x.key) === "todo");
+      if (next) setTimeout(() => select(next.key, true), 350);
+    } catch (e) {
+      setStatus(e instanceof TypeError ? "Couldn't reach the Vecta server. Check Tailscale and press Save again."
+                                       : `Couldn't save: ${e.message}`, "err");
+    } finally {
+      $("save").disabled = false;
+    }
+  }
+  $("save").addEventListener("click", save);
+
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); save(); return; }
+    const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName) && e.target.type !== "checkbox";
+    if (typing || e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === " " && state.current && !/^(BUTTON|INPUT)$/.test(e.target.tagName)) { e.preventDefault(); togglePlay(); }
+    else if (e.key === "j" || e.key === "J") step(1);
+    else if (e.key === "k" || e.key === "K") step(-1);
+  });
+
+  // ---- data: new recordings appear without a reload ----
+  async function refresh() {
+    try {
+      const res = await fetch("/label/items");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      state.items = data.items;
+      state.labels = data.labels;
+      $("banner").hidden = true;
+    } catch (e) {
+      $("banner").textContent = "Can't reach the Vecta server, so new recordings and saves won't show. Retrying.";
+      $("banner").hidden = false;
+      return;
+    }
+    renderStats();
+    renderQueue();
+    if (state.current && itemOf(state.current)) {
+      renderHyps(itemOf(state.current));
+      fillForm(state.current);
+    } else {
+      const first = state.items.find((u) => statusOf(u.key) === "todo") || state.items[0];
+      if (first) select(first.key);
+    }
+  }
+  refresh();
+  setInterval(refresh, 5000);
+})();
 </script>
 </body>
 </html>
