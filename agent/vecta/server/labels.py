@@ -72,26 +72,39 @@ def router(data_dir: Path) -> APIRouter:
 
     @r.post("/label")
     async def save(body: dict) -> dict:
-        sid, uid = body.get("session", ""), body.get("id", "")
-        if not (_SID.match(sid) and _UID.match(uid)):
-            raise HTTPException(400, "bad session or id")
-        label = {
-            "session": sid,
-            "id": uid,
-            "reference": "" if body.get("noSpeech") else str(body.get("reference", "")).strip(),
-            "noSpeech": bool(body.get("noSpeech")),
-            "unsure": bool(body.get("unsure")),
-            "exclude": bool(body.get("exclude")),
-            "note": str(body.get("note", "")).strip(),
-            "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-        }
-        if not (label["reference"] or label["noSpeech"] or label["exclude"] or label["note"]):
-            raise HTTPException(400, "write what was said, tick an option, or leave a comment")
+        label = _label(body)
         with labels_file.open("a") as f:
             f.write(json.dumps(label) + "\n")
         return label
 
+    @r.post("/label/batch")
+    async def save_many(body: dict) -> list[dict]:
+        """Same as /label for several utterances at once (e.g. mark all clicks as noise)."""
+        labels = [_label(item) for item in body.get("items", [])]
+        with labels_file.open("a") as f:
+            f.writelines(json.dumps(label) + "\n" for label in labels)
+        return labels
+
     return r
+
+
+def _label(body: dict) -> dict:
+    sid, uid = body.get("session", ""), body.get("id", "")
+    if not (_SID.match(sid) and _UID.match(uid)):
+        raise HTTPException(400, "bad session or id")
+    label = {
+        "session": sid,
+        "id": uid,
+        "reference": "" if body.get("noSpeech") else str(body.get("reference", "")).strip(),
+        "noSpeech": bool(body.get("noSpeech")),
+        "unsure": bool(body.get("unsure")),
+        "exclude": bool(body.get("exclude")),
+        "note": str(body.get("note", "")).strip(),
+        "updatedAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    if not (label["reference"] or label["noSpeech"] or label["exclude"] or label["note"]):
+        raise HTTPException(400, "write what was said, tick an option, or leave a comment")
+    return label
 
 
 def _merge(meta_file: Path) -> dict[str, dict]:

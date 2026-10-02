@@ -280,6 +280,10 @@ def test_recorder_and_labels(tmp_path: Path):
     assert client.post("/label", json={**body, "noSpeech": True}).json()["reference"] == ""
     saved = client.get("/label/items").json()["labels"]
     assert saved["abcdef1/u_0001"]["noSpeech"] is True  # last save wins
+    batch = [{"session": "abcdef1", "id": "u_0002", "exclude": True}]
+    assert client.post("/label/batch", json={"items": batch}).json()[0]["exclude"] is True
+    bad = {"items": [{"session": "x", "id": "u_1"}]}
+    assert client.post("/label/batch", json=bad).status_code == 400
 
 
 def test_prune_keeps_only_labelled_recordings(tmp_path: Path):

@@ -52,6 +52,15 @@
 
   .queue { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .queue-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .filters button { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px;
+                    padding: 2px 10px; font-size: 12px; cursor: pointer; }
+  .filters button[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .bulk { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 14px;
+          border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .bulk button { border: 1px solid var(--line); background: var(--surface); border-radius: 5px; padding: 2px 8px;
+                 font-size: 12px; cursor: pointer; }
+  .bulk button:hover { border-color: var(--accent); color: var(--accent); }
   .queue ol { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
   .item-btn { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 4px 10px;
               align-items: center; padding: 10px 14px; background: none; border: 0;
@@ -146,6 +155,12 @@
   <main class="grid">
     <nav class="queue" aria-label="Recorded utterances">
       <div class="queue-head"><span class="label">Utterances</span><span class="label" id="queue-count"></span></div>
+      <div class="filters" id="filters" role="group" aria-label="Show"></div>
+      <div class="bulk" id="bulk" hidden>
+        <span id="bulk-count"></span>
+        <button type="button" id="bulk-noise">All no speech</button>
+        <button type="button" id="bulk-out">Leave all out</button>
+      </div>
       <ol id="queue"></ol>
     </nav>
 
@@ -196,7 +211,15 @@
           <button type="button" class="save" id="save">Save and next</button>
           <span class="status" id="status"></span>
         </div>
-        <div class="keys"><kbd>Space</kbd> play &nbsp; <kbd>J</kbd><kbd>K</kbd> next / previous &nbsp; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> save</div>
+        <div class="keys">
+          Typing: <kbd>Enter</kbd> save and next &nbsp; <kbd>Shift</kbd>+<kbd>Enter</kbd> new line &nbsp;
+          <kbd>Alt</kbd>+<kbd>P</kbd> play/pause &nbsp; <kbd>Alt</kbd>+<kbd>R</kbd> replay &nbsp;
+          <kbd>Alt</kbd>+<kbd>N</kbd> no speech &nbsp; <kbd>Alt</kbd>+<kbd>X</kbd> leave out &nbsp;
+          <kbd>Alt</kbd>+<kbd>U</kbd> unsure &nbsp; <kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>9</kbd> use a model's text &nbsp;
+          <kbd>Esc</kbd> leave the text box<br>
+          Elsewhere: same keys without <kbd>Alt</kbd>, plus <kbd>Space</kbd> play, <kbd>J</kbd><kbd>K</kbd> next / previous,
+          <kbd>E</kbd> or <kbd>Enter</kbd> edit text
+        </div>
       </div>
     </section>
   </main>
@@ -209,7 +232,15 @@
     too_short: "Too short: never transcribed",
     ours: "Started while the app was talking: ignored as its own voice",
   };
-  const state = { items: [], labels: {}, drafts: {}, current: null };
+  const state = { items: [], labels: {}, drafts: {}, current: null, filter: "speech" };
+  // Most recordings are not speech: the VAD fires on clicks and room noise. Speech first.
+  const GROUPS = {
+    speech: { name: "Speech", test: (u) => u.kind === "speech" && hasWords(liveText(u)) },
+    blank: { name: "No text", test: (u) => u.kind === "speech" && !hasWords(liveText(u)) },
+    short: { name: "Clicks", test: (u) => u.kind === "too_short" },
+    ours: { name: "Our voice", test: (u) => u.kind === "ours" },
+    all: { name: "All", test: () => true },
+  };
 
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -231,6 +262,10 @@
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
   const itemOf = (key) => state.items.find((u) => u.key === key);
   const liveText = (u) => (u.hyps.find((h) => h.live) || {}).text;
+  // Whisper's non-speech markers: [BLANK_AUDIO], (music), *laughs*, or just punctuation
+  const hasWords = (t) => !!t && !/^\s*(\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|[\s.,!?-]+)\s*$/.test(t.replace(/\n/g, " "))
+    && /[a-z0-9]/i.test(t.replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, ""));
+  const shown = () => state.items.filter(GROUPS[state.filter].test);
 
   function statusOf(key) {
     const l = state.labels[key];
@@ -278,14 +313,30 @@
     $("queue-count").textContent = n ? `${done} of ${n} done` : "";
   }
 
+  function renderFilters() {
+    $("filters").replaceChildren(...Object.entries(GROUPS).map(([key, g]) => {
+      const n = state.items.filter(g.test).length;
+      const todo = state.items.filter((u) => g.test(u) && statusOf(u.key) === "todo").length;
+      const b = el("button", { type: "button", "aria-pressed": String(state.filter === key),
+                               text: `${g.name} ${todo}/${n}` });
+      b.addEventListener("click", () => { state.filter = key; renderQueue(); selectFirstTodo(); });
+      return b;
+    }));
+    const todo = shown().filter((u) => statusOf(u.key) === "todo");
+    $("bulk").hidden = !["blank", "short", "ours"].includes(state.filter) || !todo.length;
+    $("bulk-count").textContent = `${todo.length} unlabelled here:`;
+  }
+
   function renderQueue() {
+    renderFilters();
     const list = $("queue");
-    if (!state.items.length) {
-      list.replaceChildren(el("li", { class: "empty", text: "No recordings yet." }));
+    const items = shown();
+    if (!items.length) {
+      list.replaceChildren(el("li", { class: "empty", text: "Nothing here." }));
       return;
     }
     const keepScroll = list.scrollTop;
-    list.replaceChildren(...state.items.map((u) => {
+    list.replaceChildren(...items.map((u) => {
       const l = state.labels[u.key];
       const s = statusOf(u.key);
       const labelled = l && (l.reference || l.noSpeech || l.exclude);
@@ -306,7 +357,7 @@
         el("span", { class: "dur", text: `${Number(u.duration_s).toFixed(1)} s` }),
         el("span", { class: "said", text: preview }),
       ]);
-      btn.addEventListener("click", () => select(u.key));
+      btn.addEventListener("click", () => select(u.key, true));
       return el("li", {}, btn);
     }));
     list.scrollTop = keepScroll;
@@ -455,14 +506,61 @@
       audio.src = `/label/audio/${u.session}/${u.id}.wav`;
       drawWave();
       if (autoplay) audio.play().catch(() => {});
+      const row = document.querySelector('.item-btn[aria-current="true"]');
+      if (row) row.scrollIntoView({ block: "nearest" });
+      if (autoplay && !$("reference").disabled) {
+        $("reference").focus();
+        $("reference").select();  // typing replaces Whisper's text; arrows keep it
+      }
     }
   }
 
   function step(delta) {
-    const i = state.items.findIndex((u) => u.key === state.current);
-    const next = state.items[Math.max(0, Math.min(state.items.length - 1, i + delta))];
-    if (next) select(next.key);
+    const items = shown();
+    const i = items.findIndex((u) => u.key === state.current);
+    const next = items[Math.max(0, Math.min(items.length - 1, i + delta))];
+    if (next) select(next.key, true);
   }
+
+  function selectFirstTodo() {
+    const items = shown();
+    const first = items.find((u) => statusOf(u.key) === "todo") || items[0];
+    if (first) select(first.key, false);
+  }
+
+  // one-key verdicts: set it and save straight away
+  function quick(patch) {
+    if (!state.current) return;
+    state.drafts[state.current] = { ...draftFor(state.current), ...patch, dirty: true };
+    fillForm(state.current);
+    save();
+  }
+
+  function useHyp(n) {
+    const u = itemOf(state.current);
+    const h = u && u.hyps[n - 1];
+    if (!h || typeof h.text !== "string") return;
+    state.drafts[u.key] = { ...draftFor(u.key), reference: h.text, noSpeech: false, dirty: true };
+    fillForm(u.key);
+    $("reference").focus();
+  }
+
+  async function bulk(patch) {
+    const todo = shown().filter((u) => statusOf(u.key) === "todo");
+    if (!todo.length || !confirm(`Label ${todo.length} recordings at once?`)) return;
+    const res = await fetch("/label/batch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items: todo.map((u) => ({ session: u.session, id: u.id, ...patch })) }),
+    });
+    if (!res.ok) { setStatus(`Couldn't save: HTTP ${res.status}`, "err"); return; }
+    for (const l of await res.json()) state.labels[`${l.session}/${l.id}`] = l;
+    renderStats();
+    renderQueue();
+    setStatus(`Labelled ${todo.length}.`, "ok");
+  }
+  $("bulk-noise").addEventListener("click", () => bulk({ noSpeech: true }));
+  $("bulk-out").addEventListener("click", () => bulk({ exclude: true, note: "bulk: not speech" }));
 
   // ---- form ----
   $("reference").addEventListener("input", (e) => editDraft({ reference: e.target.value }));
@@ -503,10 +601,11 @@
       setStatus(!l.reference && !l.noSpeech && !l.exclude ? "Comment saved. The utterance stays unlabelled." : "Saved", "ok");
       renderStats();
       renderQueue();
-      const i = state.items.findIndex((x) => x.key === key);
-      const next = state.items.slice(i + 1).concat(state.items.slice(0, i))
+      const items = shown();
+      const i = items.findIndex((x) => x.key === key);
+      const next = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0)))
         .find((x) => statusOf(x.key) === "todo");
-      if (next) setTimeout(() => select(next.key, true), 350);
+      if (next) setTimeout(() => select(next.key, true), 250);
     } catch (e) {
       setStatus(e instanceof TypeError ? "Couldn't reach the Vecta server. Check Tailscale and press Save again."
                                        : `Couldn't save: ${e.message}`, "err");
@@ -517,12 +616,27 @@
   $("save").addEventListener("click", save);
 
   document.addEventListener("keydown", (e) => {
+    const inText = e.target.id === "reference" || e.target.id === "note";
+    const k = e.key.toLowerCase();
+    // the same verdict keys work everywhere: with Alt while typing, bare elsewhere
+    const verdict = (inText && e.altKey && !e.ctrlKey && !e.metaKey) || (!inText && !e.altKey && !e.ctrlKey && !e.metaKey);
     if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); save(); return; }
-    const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName) && e.target.type !== "checkbox";
-    if (typing || e.altKey || e.ctrlKey || e.metaKey) return;
-    if (e.key === " " && state.current && !/^(BUTTON|INPUT)$/.test(e.target.tagName)) { e.preventDefault(); togglePlay(); }
-    else if (e.key === "j" || e.key === "J") step(1);
-    else if (e.key === "k" || e.key === "K") step(-1);
+    if (inText && e.key === "Enter" && !e.shiftKey && !e.altKey) { e.preventDefault(); save(); return; }
+    if (inText && e.key === "Escape") { e.target.blur(); return; }
+    if (!verdict) return;
+    const act = {
+      p: togglePlay,
+      r: () => { audio.currentTime = 0; audio.play().catch(() => {}); },
+      n: () => quick({ noSpeech: true, exclude: false }),
+      x: () => quick({ exclude: true }),
+      u: () => { editDraft({ unsure: !draftFor(state.current).unsure }); fillForm(state.current); },
+    }[k] || (/^[1-9]$/.test(e.key) ? () => useHyp(Number(e.key)) : null);
+    if (act) { e.preventDefault(); act(); return; }
+    if (inText) return;
+    if (e.key === " " && state.current && e.target.tagName !== "BUTTON") { e.preventDefault(); togglePlay(); }
+    else if (k === "j") step(1);
+    else if (k === "k") step(-1);
+    else if (k === "e" || e.key === "Enter") { e.preventDefault(); $("reference").focus(); }
   });
 
   // ---- data: new recordings appear without a reload ----
@@ -545,8 +659,7 @@
       renderHyps(itemOf(state.current));
       fillForm(state.current);
     } else {
-      const first = state.items.find((u) => statusOf(u.key) === "todo") || state.items[0];
-      if (first) select(first.key);
+      selectFirstTodo();
     }
   }
   refresh();
