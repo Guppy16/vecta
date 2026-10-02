@@ -1,4 +1,4 @@
-package com.example.vectaar.ui
+package io.github.guppy16.vecta.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
@@ -80,11 +80,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
-import com.example.vectaar.CaptureItem
-import com.example.vectaar.ChatItem
-import com.example.vectaar.SessionViewModel
-import com.example.vectaar.UiState
-import com.example.vectaar.transport.PageRender
+import io.github.guppy16.vecta.CaptureItem
+import io.github.guppy16.vecta.ChatItem
+import io.github.guppy16.vecta.SessionViewModel
+import io.github.guppy16.vecta.UiState
+import io.github.guppy16.vecta.transport.PageRender
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 

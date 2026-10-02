@@ -1,4 +1,4 @@
-package com.example.vectaar.transport
+package io.github.guppy16.vecta.transport
 
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName

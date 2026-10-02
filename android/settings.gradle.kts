@@ -22,6 +22,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "VectaAR"
+rootProject.name = "Vecta"
 include(":app")
  

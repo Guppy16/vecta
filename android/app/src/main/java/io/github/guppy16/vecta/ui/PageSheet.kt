@@ -1,4 +1,4 @@
-package com.example.vectaar.ui
+package io.github.guppy16.vecta.ui
 
 import android.annotation.SuppressLint
 import android.webkit.JavascriptInterface
@@ -13,7 +13,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import com.example.vectaar.transport.PageRender
+import io.github.guppy16.vecta.transport.PageRender
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject

@@ -1,4 +1,4 @@
-package com.example.vectaar.ui.theme
+package io.github.guppy16.vecta.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle

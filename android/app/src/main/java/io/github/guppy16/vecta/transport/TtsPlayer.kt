@@ -1,4 +1,4 @@
-package com.example.vectaar.transport
+package io.github.guppy16.vecta.transport
 
 import android.content.Context
 import android.media.AudioAttributes

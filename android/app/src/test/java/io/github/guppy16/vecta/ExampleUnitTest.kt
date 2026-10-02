@@ -1,4 +1,4 @@
-package com.example.vectaar
+package io.github.guppy16.vecta
 
 import org.junit.Test
 

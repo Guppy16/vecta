@@ -15,7 +15,7 @@ val serverIp: String = localProperties.getProperty("SERVER_IP")
     ?: error("🔥 BUILD FAILED: SERVER_IP is missing! Please add SERVER_IP=\"100.x.x.x\" to your local.properties file.")
 
 android {
-    namespace = "com.example.vectaar"
+    namespace = "io.github.guppy16.vecta"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -23,7 +23,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.vectaar"
+        applicationId = "io.github.guppy16.vecta"
         minSdk = 29
         targetSdk = 36
         versionCode = 1

@@ -1,4 +1,4 @@
-package com.example.vectaar
+package io.github.guppy16.vecta
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -17,7 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
-import com.example.vectaar.ui.VectaScreen
+import io.github.guppy16.vecta.ui.VectaScreen
 
 class MainActivity : ComponentActivity() {
     private var hasCamera by mutableStateOf(false)
