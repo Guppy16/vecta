@@ -232,7 +232,7 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
         if HOWTO_HINTS.search(text):
             # how-to questions belong to the main agent; don't let the talker improvise one
             lv.talker.heard(text)
-            lv.talker.said(HOLDING_LINE)
+            lv.talker.said(HOLDING_LINE, escalate=True)
             reply = Reply(HOLDING_LINE, True, 0)
             voice.write(HOLDING_LINE)
         elif LOOK_HINTS.search(text):
@@ -248,7 +248,7 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
             voice.drop_unsaid()
             voice.write(" " + HOLDING_LINE)
             reply = Reply(f"{guard.said} {HOLDING_LINE}".strip(), True, reply.latency_ms)
-            lv.talker.said(HOLDING_LINE)
+            lv.talker.said(HOLDING_LINE, escalate=True)
         await committed.wait()
     except asyncio.CancelledError:
         voice.cancel()
