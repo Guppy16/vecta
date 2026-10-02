@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vecta labels</title>
+<style>
+  :root {
+    --bg: #0e0f11; --card: #17191c; --line: #26292e; --text: #e8e9eb; --dim: #8b9099;
+    --accent: #46c46a; --warn: #e0a43a; --bad: #e0605a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line);
+           padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  h1 { font-size: 16px; margin: 0 auto 0 0; font-weight: 600; }
+  .tabs button { background: none; border: 1px solid var(--line); color: var(--dim);
+                 padding: 6px 12px; border-radius: 999px; cursor: pointer; font: inherit; }
+  .tabs button.on { color: var(--text); border-color: var(--text); }
+  .hint { color: var(--dim); font-size: 13px; width: 100%; }
+  main { max-width: 760px; margin: 0 auto; padding: 12px 16px 80px; }
+  .u { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+       padding: 12px; margin-bottom: 10px; }
+  .u.focus { border-color: var(--accent); }
+  .u.done { opacity: .55; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .play { flex: none; width: 40px; height: 40px; border-radius: 50%; border: none; cursor: pointer;
+          background: var(--accent); color: #0e0f11; font-size: 16px; }
+  .meta { color: var(--dim); font-size: 12px; }
+  .asr { color: var(--dim); margin: 8px 0 6px; font-style: italic; overflow-wrap: anywhere; }
+  input[type=text] { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+                     border-radius: 8px; padding: 9px 10px; font: inherit; }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  .kinds { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .kinds button { background: none; border: 1px solid var(--line); color: var(--dim); border-radius: 8px;
+                  padding: 6px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+  .kinds button.on { color: var(--text); border-color: var(--accent); }
+  .badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--line); }
+  .badge.too_short { color: var(--warn); } .badge.ours { color: var(--bad); }
+  .empty { color: var(--dim); text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Utterances <span id="count" class="meta"></span></h1>
+  <div class="tabs"><button data-f="todo" class="on">To label</button> <button data-f="all">All</button></div>
+  <div class="hint">Play, fix the text to what was really said, Enter saves and plays the next.
+    Mark noise, speech not meant for the agent, or unclear audio with the buttons.</div>
+</header>
+<main id="list"></main>
+<audio id="player"></audio>
+<script>
+const KINDS = [["speech", "Speech"], ["not_for_agent", "Not for agent"], ["not_speech", "Noise"], ["unclear", "Unclear"]];
+let items = [], filter = "todo";
+const player = document.getElementById("player");
+const key = u => `${u.session}/${u.id}`;
+const audioUrl = u => `/label/audio/${u.session}/${u.id}.wav`;
+
+async function load() {
+  items = await (await fetch("/label/items")).json();
+  render();
+}
+
+function visible() { return items.filter(u => filter === "all" || !u.label); }
+
+function render() {
+  const list = document.getElementById("list");
+  const shown = visible();
+  document.getElementById("count").textContent =
+    `${items.filter(u => u.label).length} of ${items.length} labelled`;
+  list.replaceChildren();
+  if (!shown.length) { list.innerHTML = '<div class="empty">Nothing left to label.</div>'; return; }
+  for (const u of shown) list.append(card(u));
+}
+
+function card(u) {
+  const el = document.createElement("div");
+  el.className = "u" + (u.label ? " done" : "");
+  el.dataset.key = key(u);
+  const secs = u.voiced_ms ? (u.voiced_ms / 1000).toFixed(1) + " s voiced" : "";
+  const when = u.started ? new Date(u.started * 1000).toLocaleString() : "";
+  const label = u.label || {};
+  el.innerHTML = `
+    <div class="row">
+      <button class="play" title="Play">▶</button>
+      <div class="meta">${when} · ${secs} ${u.kind && u.kind !== "speech" ? `<span class="badge ${u.kind}">${u.kind.replace("_", " ")}</span>` : ""}</div>
+    </div>
+    <div class="asr"></div>
+    <input type="text" placeholder="What was said">
+    <div class="kinds"></div>`;
+  el.querySelector(".asr").textContent = u.text != null ? `Whisper: ${u.text || "(nothing)"}` : "Whisper: (not transcribed)";
+  const input = el.querySelector("input");
+  input.value = label.transcript ?? (u.text || "");
+  el.querySelector(".play").onclick = () => play(u, el);
+  input.onfocus = () => focus(el);
+  input.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); save(u, el, "speech"); } };
+  for (const [kind, name] of KINDS) {
+    const b = document.createElement("button");
+    b.textContent = name;
+    if (label.kind === kind) b.className = "on";
+    b.onclick = () => save(u, el, kind);
+    el.querySelector(".kinds").append(b);
+  }
+  return el;
+}
+
+function focus(el) {
+  document.querySelectorAll(".u.focus").forEach(x => x.classList.remove("focus"));
+  el.classList.add("focus");
+}
+
+function play(u, el) {
+  focus(el);
+  player.src = audioUrl(u);
+  player.play();
+}
+
+async function save(u, el, kind) {
+  const transcript = kind === "speech" || kind === "not_for_agent" ? el.querySelector("input").value : "";
+  const res = await fetch("/label", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: u.session, id: u.id, kind, transcript }) });
+  if (!res.ok) { alert("save failed: " + res.status); return; }
+  u.label = await res.json();
+  const next = el.nextElementSibling;
+  if (filter === "todo") el.remove(); else el.replaceWith(card(u));
+  document.getElementById("count").textContent =
+    `${items.filter(x => x.label).length} of ${items.length} labelled`;
+  if (next && next.classList.contains("u")) {
+    const nu = items.find(x => key(x) === next.dataset.key);
+    next.querySelector("input").focus();
+    if (nu) play(nu, next);
+  }
+}
+
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  filter = b.dataset.f;
+  render();
+});
+load();
+</script>
+</body>
+</html>

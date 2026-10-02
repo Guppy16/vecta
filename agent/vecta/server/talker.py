@@ -112,9 +112,10 @@ class Talker:
             },
             stream=True,
         )
-        raw, first_ms = "", None
+        raw, first_ms, timings = "", None, {}
         extractor = ReplyExtractor()
         async for chunk in stream:
+            timings = (chunk.model_extra or {}).get("timings") or timings  # llama.cpp, last chunk
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if not delta:
                 continue
@@ -122,6 +123,13 @@ class Talker:
             if (text := extractor.feed(delta)) and on_text:
                 first_ms = first_ms or int((time.monotonic() - t0) * 1000)
                 on_text(text)
+        log.info(
+            "talker llm: prompt %s tok (%s cached) in %s ms, %s tok out",
+            timings.get("prompt_n"),
+            timings.get("cache_n"),
+            round(timings.get("prompt_ms", 0)),
+            timings.get("predicted_n"),
+        )
         reply, escalate, tool = parse_reply(raw)
         if extractor.started:
             reply = extractor.text.strip()  # what was actually spoken, even if the JSON broke

@@ -14,6 +14,7 @@ carries on talking.
 
 import asyncio
 import io
+import json
 import logging
 import os
 import re
@@ -21,6 +22,7 @@ import time
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import webrtcvad
@@ -65,6 +67,35 @@ class Transcriber:
         return r.json().get("text", "").strip()
 
 
+class Recorder:
+    """Keeps every utterance the listener cut out, for labelling and ASR benchmarks.
+
+    `<dir>/u_0001.wav` (16 kHz PCM16 mono) plus `<dir>/utterances.jsonl`, one line per fact
+    as it becomes known (the segment, then its transcript); readers merge lines by id.
+    """
+
+    def __init__(self, dir: Path) -> None:
+        self.dir = dir
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._n = len(list(self.dir.glob("u_*.wav")))
+
+    def save(self, pcm16: bytes, **meta: object) -> str:
+        self._n += 1
+        uid = f"u_{self._n:04d}"
+        with wave.open(str(self.dir / f"{uid}.wav"), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(RATE)
+            w.writeframes(pcm16)
+        self.note(uid, **meta)
+        return uid
+
+    def note(self, uid: str, **fields: object) -> None:
+        line = json.dumps({"id": uid, "ts": round(time.time(), 3), **fields})
+        with (self.dir / "utterances.jsonl").open("a") as f:
+            f.write(line + "\n")
+
+
 # text, started_at, ended_at (epoch s), committed -> the task that handles it (cancellable)
 OnText = Callable[[str, float, float, asyncio.Event], asyncio.Task | None]
 
@@ -74,6 +105,8 @@ class _Speculation:
     committed: asyncio.Event
     task: asyncio.Task | None = None  # transcribe, then hand the text to on_text
     reply: asyncio.Task | None = None  # what on_text started
+    text: str | None = None  # the transcript, once known
+    rec: str | None = None  # recording id, once the utterance has ended
 
     def cancel(self) -> None:
         for t in (self.task, self.reply):
@@ -93,10 +126,12 @@ class Listener:
         self,
         transcriber: Transcriber,
         on_text: OnText,
+        recorder: Recorder | None = None,
         aggressiveness: int = 2,
     ) -> None:
         self._stt = transcriber
         self._on_text = on_text
+        self._rec = recorder
         self.muted_until = 0.0
         self._started_at = 0.0
         self._vad = webrtcvad.Vad(aggressiveness)
@@ -156,12 +191,32 @@ class Listener:
         spec, self._spec = self._spec, None
         if spec:  # the pause was the end after all: let the prepared reply be heard
             spec.committed.set()
+            spec.rec = self._record(pcm, started, ended, voiced, "speech")
+            if spec.rec and spec.text is not None:
+                self._rec.note(spec.rec, text=spec.text)
             return
         if voiced < MIN_UTTERANCE_MS:
-            return  # a click, a cough
-        if self._ours(started):
+            self._record(pcm, started, ended, voiced, "too_short")  # a click, a cough, or a "no"
             return
-        self._start(pcm, started, ended).committed.set()
+        if self._ours(started):
+            self._record(pcm, started, ended, voiced, "ours")
+            return
+        spec = self._start(pcm, started, ended)
+        spec.rec = self._record(pcm, started, ended, voiced, "speech")
+        spec.committed.set()
+
+    def _record(
+        self, pcm: bytes, started: float, ended: float, voiced: int, kind: str
+    ) -> str | None:
+        if self._rec is None:
+            return None
+        try:
+            return self._rec.save(
+                pcm, started=round(started, 3), ended=round(ended, 3), voiced_ms=voiced, kind=kind
+            )
+        except OSError as e:
+            log.warning("recording failed: %s", e)
+            return None
 
     def _ours(self, started: float) -> bool:
         """Did this utterance start while we were talking (our voice through the mic)?"""
@@ -178,5 +233,8 @@ class Listener:
         except Exception as e:
             log.warning("stt failed: %s", e)
             return
+        spec.text = text
+        if spec.rec and self._rec:
+            self._rec.note(spec.rec, text=text)
         if text and not NON_SPEECH.match(text):
             spec.reply = self._on_text(text, started, ended, spec.committed)

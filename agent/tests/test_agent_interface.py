@@ -7,9 +7,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 from av import AudioResampler
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from vecta.protocol import messages as m
-from vecta.server.audio import FRAME_BYTES, FRAME_MS, Listener
+from vecta.server import labels
+from vecta.server.audio import FRAME_BYTES, FRAME_MS, Listener, Recorder
 from vecta.server.ground import parse_box
 from vecta.server.inbox import Inbox
 from vecta.server.sessions import SessionStore
@@ -246,3 +249,24 @@ def test_listener_cancels_speculation_when_the_user_carries_on():
         assert replies[1].done() and not replies[1].cancelled()
 
     asyncio.run(run())
+
+
+def test_recorder_and_labels(tmp_path: Path):
+    rec = Recorder(tmp_path / "sessions" / "abcdef1" / "utterances")
+    uid = rec.save(b"\x00\x01" * 1600, started=1.0, ended=1.1, voiced_ms=100, kind="speech")
+    rec.note(uid, text="hello")
+    assert uid == "u_0001" and Recorder(rec.dir).save(b"") == "u_0002"  # numbering survives
+
+    app = FastAPI()
+    app.include_router(labels.router(tmp_path))
+    client = TestClient(app)
+    items = client.get("/label/items").json()
+    first = next(u for u in items if u["id"] == "u_0001")
+    assert first["text"] == "hello" and first["kind"] == "speech" and first["label"] is None
+    assert client.get("/label/audio/abcdef1/u_0001.wav").status_code == 200
+    assert client.get("/label/audio/abcdef1/..%2Fx.wav").status_code == 404
+    body = {"session": "abcdef1", "id": "u_0001", "kind": "speech", "transcript": "hello there"}
+    assert client.post("/label", json=body).status_code == 200
+    assert client.post("/label", json={**body, "kind": "bogus"}).status_code == 400
+    labelled = next(u for u in client.get("/label/items").json() if u["id"] == "u_0001")
+    assert labelled["label"]["transcript"] == "hello there"

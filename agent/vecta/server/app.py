@@ -23,7 +23,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from vecta.protocol import messages as m
-from vecta.server.audio import Listener, Transcriber
+from vecta.server import labels
+from vecta.server.audio import Listener, Recorder, Transcriber
 from vecta.server.frames import Frame
 from vecta.server.ground import MarkerSpec, MarkerTracker
 from vecta.server.keyframes import Keyframer
@@ -51,6 +52,7 @@ class Settings:
 
 settings = Settings()
 app = FastAPI(title="vecta")
+app.include_router(labels.router(settings.data_dir))
 store = SessionStore(settings.data_dir)
 vlm = Vlm()
 stt = Transcriber()
@@ -70,6 +72,7 @@ class Live:
 
 
 live: dict[str, Live] = {}
+talkers: dict[str, Talker] = {}  # outlive connections; see _talker
 
 
 def _live(session_id: str) -> Live:
@@ -105,7 +108,10 @@ async def rtc_offer(request: Request) -> dict[str, str]:
         on_audio=lambda track: _listen(session, peer, track),
     )
     lv = Live(
-        peer=peer, keyframer=Keyframer(session), markers=MarkerTracker(session, vlm, peer.send)
+        peer=peer,
+        keyframer=Keyframer(session),
+        markers=MarkerTracker(session, vlm, peer.send),
+        talker=_talker(session),
     )
     live[session.id] = lv
     lv.keyframer.start()
@@ -114,11 +120,20 @@ async def rtc_offer(request: Request) -> dict[str, str]:
     return {"sdp": answer.sdp, "type": answer.type, "session_id": session.id}
 
 
+def _talker(session: Session) -> Talker:
+    """One talker per session for the life of the server, so a reconnect keeps the
+    conversation; after a restart it starts from the last briefing in the inbox."""
+    if session.id not in talkers:
+        briefs = [e for e in session.inbox.tail(1_000_000) if e.get("type") == "brief"]
+        talkers[session.id] = Talker(briefing=briefs[-1]["text"]) if briefs else Talker()
+    return talkers[session.id]
+
+
 async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None:
     def on_text(text: str, started: float, ended: float, committed: asyncio.Event) -> asyncio.Task:
         return asyncio.create_task(_on_voice(session, peer, text, started, ended, committed))
 
-    listener = Listener(stt, on_text)
+    listener = Listener(stt, on_text, Recorder(session.dir / "utterances"))
     if lv := live.get(session.id):
         lv.listener = listener
     await listener.run(track)
