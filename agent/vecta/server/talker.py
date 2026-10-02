@@ -56,7 +56,9 @@ LOOK_HINTS = re.compile(
     r"what's this|read|reading|says|label)\b",
     re.I,
 )
-HISTORY_TURNS = 24
+# Trim in blocks, not a message at a time: dropping the oldest message changes the start of
+# the prompt, so llama.cpp would re-read the whole history every turn instead of reusing it.
+HISTORY_MAX, HISTORY_KEEP = 60, 30
 
 OnText = Callable[[str], None]
 
@@ -75,11 +77,19 @@ class Talker:
     model: str = os.environ.get("VECTA_TALKER_MODEL", "Qwen3.6-35B-A3B-MTP-GGUF")
     base_url: str = os.environ.get("VECTA_LLM_BASE_URL", "http://127.0.0.1:13305/api/v1")
     briefing: str = "No briefing yet: the main agent has not looked at the device."
+    _system_briefing: str = field(init=False)  # the one baked into the system prompt
     history: list[dict[str, str]] = field(default_factory=list)
     _client: AsyncOpenAI = field(init=False)
 
     def __post_init__(self) -> None:
+        self._system_briefing = self.briefing
         self._client = AsyncOpenAI(base_url=self.base_url, api_key="lemonade")
+
+    def brief(self, text: str) -> None:
+        """A new briefing from the main agent. It joins the dialogue as a message rather than
+        changing the system prompt, so the cached prompt prefix stays valid."""
+        self.briefing = text
+        self._push("user", f"[briefing update from the main agent] {text}")
 
     def heard(self, text: str) -> None:
         self._push("user", text)
@@ -167,11 +177,13 @@ class Talker:
         return Reply(reply, escalate, int((time.monotonic() - t0) * 1000), tool, first_ms)
 
     def _system(self) -> str:
-        return f"{PERSONA}\nBRIEFING: {self.briefing}"
+        return f"{PERSONA}\nBRIEFING: {self._system_briefing}"
 
     def _push(self, role: str, content: str) -> None:
         self.history.append({"role": role, "content": content})
-        del self.history[:-HISTORY_TURNS]
+        if len(self.history) > HISTORY_MAX:
+            del self.history[:-HISTORY_KEEP]
+            self._system_briefing = self.briefing  # the prefix changes here anyway
 
 
 def parse_reply(raw: str) -> tuple[str, bool, str | None]:

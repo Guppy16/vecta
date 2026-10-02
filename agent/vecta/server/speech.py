@@ -112,8 +112,16 @@ class SpeechStream:
     the current one finishes playing.
     """
 
-    def __init__(self, speaker: Speaker, sink: Callable[[bytes], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        speaker: Speaker,
+        sink: Callable[[bytes], Awaitable[None]],
+        active: set[SpeechStream] | None = None,
+    ) -> None:
+        """`active`: a set this stream sits in while it speaks, so it can be stopped (barge-in)."""
         self._speaker, self._sink = speaker, sink
+        self._active = active if active is not None else set()
+        self._active.add(self)
         self._queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._splitter = PhraseSplitter()
         self.first_audio_at: float | None = None  # time.monotonic()
@@ -129,12 +137,18 @@ class SpeechStream:
         for phrase in self._splitter.flush():
             self._queue.put_nowait(phrase)
         self._queue.put_nowait(None)
-        await self._task
+        await asyncio.wait([self._task])  # returns normally even if the stream was cancelled
 
     def cancel(self) -> None:
         self._task.cancel()
 
     async def _run(self) -> None:
+        try:
+            await self._speak_queued()
+        finally:
+            self._active.discard(self)
+
+    async def _speak_queued(self) -> None:
         while (phrase := await self._queue.get()) is not None:
             try:
                 pcm = await self._speaker.phrase(phrase)

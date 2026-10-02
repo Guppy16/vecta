@@ -37,6 +37,7 @@ FRAME_BYTES = RATE * FRAME_MS // 1000 * 2  # PCM16 mono
 MIN_UTTERANCE_MS = 400
 END_SILENCE_MS = 350  # end of utterance; shorter = snappier, risks splitting slow sentences
 SPECULATE_SILENCE_MS = 200  # start transcribing and replying here; heard only at END_SILENCE_MS
+BARGE_IN_MS = 400  # this much unbroken speech while we are talking = the user interrupting us
 MAX_UTTERANCE_MS = 15000
 # Whisper's non-speech tokens: [BLANK_AUDIO], [typing], (music), or just punctuation.
 NON_SPEECH = re.compile(r"^\s*(\[[^\]]*\]|\([^)]*\)|[\s.\-]+)\s*$")
@@ -118,8 +119,10 @@ class Listener:
     """Consumes one audio track; calls `on_text(text, started_at, ended_at, committed)` per
     utterance, possibly before it has ended (see the module docstring).
 
-    `muted_until` (epoch seconds) is set by the server while the agent is speaking,
-    so the phone's own speaker output isn't transcribed back as the user.
+    While the agent is speaking (`mute_for`), utterances that start are assumed to be our own
+    voice leaking back through the mic and dropped, unless they keep going for BARGE_IN_MS:
+    then the user is interrupting, `on_barge_in` is called (the server stops talking) and the
+    utterance is handled as normal speech.
     """
 
     def __init__(
@@ -127,12 +130,16 @@ class Listener:
         transcriber: Transcriber,
         on_text: OnText,
         recorder: Recorder | None = None,
+        on_barge_in: Callable[[], None] | None = None,
         aggressiveness: int = 2,
     ) -> None:
         self._stt = transcriber
         self._on_text = on_text
         self._rec = recorder
-        self.muted_until = 0.0
+        self._on_barge_in = on_barge_in
+        self.muted_until = 0.0  # epoch s: we are talking until then
+        self._talking_since = 0.0
+        self._run_ms = 0  # unbroken speech so far, for barge-in
         self._started_at = 0.0
         self._vad = webrtcvad.Vad(aggressiveness)
         self._resampler = AudioResampler(format="s16", layout="mono", rate=RATE)
@@ -143,10 +150,11 @@ class Listener:
         self._spec: _Speculation | None = None
 
     async def mute_for(self, seconds: float) -> None:
-        """The agent is about to speak: finish what the user was saying, ignore the rest."""
-        self.muted_until = time.time() + seconds
-        if self._utterance:
-            await self._flush()
+        """The agent is speaking for (at least) the next `seconds`."""
+        now = time.time()
+        if now >= self.muted_until:
+            self._talking_since = now
+        self.muted_until = max(self.muted_until, now + seconds)
 
     async def run(self, track: MediaStreamTrack) -> None:
         try:
@@ -169,9 +177,13 @@ class Listener:
                 self._utterance += chunk
                 self._voiced_ms += FRAME_MS
                 self._silence_ms = 0
+                self._run_ms += FRAME_MS
+                if self._run_ms >= BARGE_IN_MS and self._ours(self._started_at):
+                    self._barge_in()
             elif self._utterance:
                 self._utterance += chunk  # keep trailing silence so words aren't clipped
                 self._silence_ms += FRAME_MS
+                self._run_ms = 0
                 if self._silence_ms >= SPECULATE_SILENCE_MS and self._spec is None:
                     self._speculate()
             ms = len(self._utterance) * 1000 // (RATE * 2)
@@ -220,7 +232,13 @@ class Listener:
 
     def _ours(self, started: float) -> bool:
         """Did this utterance start while we were talking (our voice through the mic)?"""
-        return self.muted_until - 0.5 < started < self.muted_until
+        return self._talking_since <= started < self.muted_until
+
+    def _barge_in(self) -> None:
+        log.info("barge-in after %d ms of speech", self._run_ms)
+        self.muted_until = 0.0  # what they are saying is theirs, not our echo
+        if self._on_barge_in:
+            self._on_barge_in()
 
     def _start(self, pcm: bytes, started: float, ended: float) -> _Speculation:
         spec = _Speculation(asyncio.Event())

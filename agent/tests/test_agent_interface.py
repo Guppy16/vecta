@@ -26,7 +26,8 @@ from vecta.server.speech import (
     earcon,
 )
 from vecta.server.talker import (
-    HISTORY_TURNS,
+    HISTORY_KEEP,
+    HISTORY_MAX,
     HOWTO_HINTS,
     LOOK_HINTS,
     ReplyExtractor,
@@ -112,10 +113,15 @@ def test_talker_history_and_parse() -> None:
     assert parse_reply("plain text") == ("plain text", False, None)
     t = Talker()
     t.said("Hold it steady.")
-    for i in range(HISTORY_TURNS + 5):
+    system = t._system()
+    t.brief("The thermostat is a Danfoss.")  # joins the dialogue; the system prompt is unchanged
+    assert t._system() == system and "Danfoss" in t.history[-1]["content"]
+    for i in range(HISTORY_MAX - 2):
         t.heard(f"u{i}")
-    assert len(t.history) == HISTORY_TURNS and t.history[-1]["content"] == f"u{HISTORY_TURNS + 4}"
-    assert "BRIEFING" in t._system()
+    assert len(t.history) == HISTORY_MAX  # trimmed in one block, not message by message
+    t.heard("one more")
+    assert len(t.history) == HISTORY_KEEP and t.history[-1]["content"] == "one more"
+    assert "Danfoss" in t._system()  # the trim folds the latest briefing into the prompt
 
 
 def test_tts_track_paces_and_fills_silence() -> None:
@@ -291,3 +297,23 @@ def test_prune_keeps_only_labelled_recordings(tmp_path: Path):
     gone = labels.prune(tmp_path, now + labels.KEEP_UNLABELLED_S + 1)
     assert sorted(p.stem for p in gone) == [ids[1], ids[2], ids[3]]
     assert (rec.dir / f"{ids[0]}.wav").exists()
+
+
+def test_barge_in_stops_us_but_our_echo_does_not():
+    async def run() -> None:
+        texts: list[str] = []
+        barged: list[bool] = []
+
+        def on_text(text, started, ended, committed):
+            texts.append(text)
+            return None
+
+        listener = Listener(_FakeStt(), on_text, on_barge_in=lambda: barged.append(True))
+        listener._vad = _LoudVad()
+        await listener.mute_for(5)  # we are talking
+        await _feed(listener, _frames(300, True) + _frames(390, False))  # a short echo blip
+        assert not barged and texts == []
+        await _feed(listener, _frames(600, True) + _frames(390, False))  # the user cuts in
+        assert barged == [True] and len(texts) == 1
+
+    asyncio.run(run())

@@ -92,6 +92,7 @@ class Live:
     watcher: Watcher | None = None
     listener: Listener | None = None
     talker: Talker = field(default_factory=Talker)
+    voices: set[SpeechStream] = field(default_factory=set)  # speech in progress, for barge-in
 
 
 live: dict[str, Live] = {}
@@ -156,10 +157,22 @@ async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None
     def on_text(text: str, started: float, ended: float, committed: asyncio.Event) -> asyncio.Task:
         return asyncio.create_task(_on_voice(session, peer, text, started, ended, committed))
 
-    listener = Listener(stt, on_text, Recorder(session.dir / "utterances"))
+    def barge_in() -> None:
+        if lv := live.get(session.id):
+            _stop_talking(lv)
+
+    listener = Listener(stt, on_text, Recorder(session.dir / "utterances"), barge_in)
     if lv := live.get(session.id):
         lv.listener = listener
     await listener.run(track)
+
+
+def _stop_talking(lv: Live) -> None:
+    """The user interrupted: drop what we were about to say and what is still queued."""
+    for voice in list(lv.voices):
+        voice.cancel()
+    lv.peer.voice.clear()
+    lv.peer.session.inbox.append("barge_in")
 
 
 async def _on_voice(
@@ -206,7 +219,7 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
         await committed.wait()
         await _play(lv, pcm)
 
-    voice = SpeechStream(tts, sink)
+    voice = SpeechStream(tts, sink, lv.voices)
     try:
         if HOWTO_HINTS.search(text):
             # how-to questions belong to the main agent; don't let the talker improvise one
@@ -323,7 +336,7 @@ async def _speak(
     latency_ms: int | None = None,
 ) -> bool:
     lv.peer.send(m.AgentMessage(text=text, status=status, latency_ms=latency_ms))
-    voice = SpeechStream(tts, lambda pcm: _play(lv, pcm))
+    voice = SpeechStream(tts, lambda pcm: _play(lv, pcm), lv.voices)
     voice.write(text)
     await voice.finish()
     return voice.first_audio_at is not None
@@ -463,7 +476,7 @@ async def brief(session_id: str, request: Request) -> dict:
     """Update what the talker knows (the main agent's current understanding and intent)."""
     body = await request.json()
     lv = _live(session_id)
-    lv.talker.briefing = body["text"]
+    lv.talker.brief(body["text"])
     lv.peer.session.inbox.append("brief", text=body["text"])
     return {"briefing": lv.talker.briefing}
 
