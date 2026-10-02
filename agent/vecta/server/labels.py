@@ -1,7 +1,8 @@
 """Labelling recorded utterances: a page on the server (/label) for writing down what was
 really said, so ASR models can be benchmarked on our own voices and rooms.
 
-Recordings come from audio.Recorder (`data/sessions/<id>/utterances/`). Other ASR runs can
+Recordings come from audio.Recorder (`data/sessions/<id>/utterances/`). Audio nobody has kept
+is deleted after KEEP_UNLABELLED_S (see prune). Other ASR runs can
 add their transcripts next to them in `utterances/hyps.jsonl` ({id, backend, text}); the
 page shows them beside the live Whisper result. Labels go to `data/labels.jsonl`, one line
 per save; the last line for an utterance wins.
@@ -20,6 +21,7 @@ from fastapi.responses import FileResponse
 
 PAGE = Path(__file__).parent / "static" / "label.html"
 PEAK_BINS = 300
+KEEP_UNLABELLED_S = 24 * 3600  # recordings are personal: only labelled ones are kept for longer
 _SID = re.compile(r"^[A-Za-z0-9_-]{6,32}$")
 _UID = re.compile(r"^u_\d{4}$")
 
@@ -133,3 +135,23 @@ def _peaks(wav: Path, mtime: float) -> tuple[float, list[int]]:
     peaks = np.array([b.max() for b in bins], dtype=float)
     peaks = np.round(peaks / max(peaks.max(), 1) * 100).astype(int)
     return round(a.size / rate, 2), peaks.tolist()
+
+
+def prune(data_dir: Path, now: float | None = None) -> list[Path]:
+    """Delete recordings older than KEEP_UNLABELLED_S that no label keeps (unlabelled, or
+    marked not worth keeping). Kept: a transcript, no speech, unsure, or a comment.
+    Transcript text stays in utterances.jsonl and the inbox; only the audio goes."""
+    now = time.time() if now is None else now
+    labels = _labels(data_dir / "labels.jsonl")
+    removed = []
+    for wav in (data_dir / "sessions").glob("*/utterances/u_*.wav"):
+        label = labels.get(f"{wav.parent.parent.name}/{wav.stem}")
+        kept = (
+            label
+            and not label["exclude"]
+            and (label["reference"] or label["noSpeech"] or label["unsure"] or label["note"])
+        )
+        if not kept and now - wav.stat().st_mtime > KEEP_UNLABELLED_S:
+            wav.unlink(missing_ok=True)
+            removed.append(wav)
+    return removed

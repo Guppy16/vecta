@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import struct
+import time
 from pathlib import Path
 
 import numpy as np
@@ -272,3 +273,21 @@ def test_recorder_and_labels(tmp_path: Path):
     assert client.post("/label", json={**body, "noSpeech": True}).json()["reference"] == ""
     saved = client.get("/label/items").json()["labels"]
     assert saved["abcdef1/u_0001"]["noSpeech"] is True  # last save wins
+
+
+def test_prune_keeps_only_labelled_recordings(tmp_path: Path):
+    rec = Recorder(tmp_path / "sessions" / "abcdef1" / "utterances")
+    ids = [rec.save(b"\x00\x00" * 160) for _ in range(4)]  # u_0001..u_0004
+    blank = {"reference": "", "noSpeech": False, "unsure": False, "exclude": False, "note": ""}
+    lines = [
+        {**blank, "id": ids[0], "reference": "keep me"},
+        {**blank, "id": ids[1], "exclude": True},
+    ]
+    with (tmp_path / "labels.jsonl").open("w") as f:
+        for line in lines:
+            f.write(json.dumps({"session": "abcdef1", **line}) + "\n")
+    now = time.time()
+    assert labels.prune(tmp_path, now) == []  # nothing is old yet
+    gone = labels.prune(tmp_path, now + labels.KEEP_UNLABELLED_S + 1)
+    assert sorted(p.stem for p in gone) == [ids[1], ids[2], ids[3]]
+    assert (rec.dir / f"{ids[0]}.wav").exists()

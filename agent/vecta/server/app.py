@@ -13,6 +13,8 @@ import logging
 import os
 import secrets
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -51,7 +53,28 @@ class Settings:
 
 
 settings = Settings()
-app = FastAPI(title="vecta")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    task = asyncio.create_task(_prune_recordings(), name="prune-recordings")
+    yield
+    task.cancel()
+
+
+async def _prune_recordings() -> None:
+    """Hourly: unlabelled audio older than a day is deleted (labels.prune)."""
+    while True:
+        try:
+            removed = await asyncio.to_thread(labels.prune, settings.data_dir)
+            if removed:
+                log.info("deleted %d unlabelled recordings older than a day", len(removed))
+        except Exception:
+            log.exception("pruning recordings failed")
+        await asyncio.sleep(3600)
+
+
+app = FastAPI(title="vecta", lifespan=lifespan)
 app.include_router(labels.router(settings.data_dir))
 store = SessionStore(settings.data_dir)
 vlm = Vlm()
