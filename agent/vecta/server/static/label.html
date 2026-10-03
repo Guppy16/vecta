@@ -113,6 +113,10 @@
   .hyp .who { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
   .hyp .text { overflow-wrap: anywhere; }
   .hyp .text.none { color: var(--muted); font-style: italic; }
+  .hyp.same .text { color: var(--muted); }
+  .hyp .same-tag { font-size: 11px; color: var(--muted); margin-left: 6px; }
+  ins.add { text-decoration: none; background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 2px; }
+  del.drop { color: var(--danger); background: var(--danger-soft); border-radius: 3px; padding: 0 2px; }
   .use { display: inline-flex; gap: 8px; align-items: center; border: 1px solid var(--line); background: var(--surface);
          border-radius: 5px; padding: 3px 8px; font-size: 12.5px; cursor: pointer; }
   .use:hover { border-color: var(--accent); color: var(--accent); }
@@ -376,18 +380,51 @@
     list.scrollTop = keepScroll;
   }
 
+  // Word diff of a model's text against the current label: what using it would change.
+  const tokNorm = (w) => w.toLowerCase().replace(/[^a-z0-9']+/g, "");
+  function wordDiff(refText, hypText) {
+    // punctuation-only tokens ("-", "...") aren't words: leave them out of the comparison
+    const words = (t) => t.split(/\s+/).filter((w) => tokNorm(w));
+    const a = words(refText), b = words(hypText);
+    const an = a.map(tokNorm), bn = b.map(tokNorm);
+    const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = a.length - 1; i >= 0; i--)
+      for (let j = b.length - 1; j >= 0; j--)
+        L[i][j] = an[i] && an[i] === bn[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < a.length || j < b.length) {
+      if (i < a.length && j < b.length && an[i] && an[i] === bn[j]) { out.push(["same", b[j]]); i++; j++; }
+      else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", b[j]]); j++; }
+      else { out.push(["drop", a[i]]); i++; }
+    }
+    return out;
+  }
+
   function renderHyps(u) {
+    const ref = $("reference").value;
     let n = 0;
     $("hyps").replaceChildren(...u.hyps.map((h) => {
       const has = hasWords(h.text);
-      const text = el("span", { class: has ? "text" : "text none", text: has ? cleanText(h.text) : h.text == null ? "(not transcribed)" : "(nothing)" });
+      const text = el("span", { class: has ? "text" : "text none" });
+      let same = false;
+      if (!has) text.textContent = h.text == null ? "(not transcribed)" : "(nothing)";
+      else if (!ref.trim()) text.textContent = cleanText(h.text);
+      else {
+        const ops = wordDiff(ref, cleanText(h.text));
+        same = ops.every(([op]) => op === "same");
+        for (const [op, w] of ops) {
+          text.append(op === "same" ? w : el(op === "add" ? "ins" : "del", { class: op, text: w }), " ");
+        }
+        if (same) text.append(el("span", { class: "same-tag", text: "same" }));
+      }
       let use = el("span");
       if (has) {
         const i = ++n;
         use = el("button", { type: "button", class: "use", title: `Use this text (${i})` }, ["Use", kbd(String(i))]);
         use.addEventListener("click", () => useHyp(i));
       }
-      return el("div", { class: "hyp" }, [el("span", { class: "who", text: h.backend }), text, use]);
+      return el("div", { class: same ? "hyp same" : "hyp" }, [el("span", { class: "who", text: h.backend }), text, use]);
     }));
   }
 
@@ -511,8 +548,8 @@
       drawWave();
       if (autoplay) audio.play().catch(() => {});
     }
-    renderHyps(u);
     renderForm();
+    renderHyps(u);
     renderQueue();
     const row = document.querySelector('.item-btn[aria-current="true"]');
     if (row && changed) row.scrollIntoView({ block: "nearest" });
@@ -566,7 +603,12 @@
   }
   $("reference").addEventListener("focus", () => { $("reference").readOnly = false; renderForm(); });
   $("reference").addEventListener("blur", () => { $("reference").readOnly = true; renderForm(); });
-  $("reference").addEventListener("input", (e) => { state.drafts[state.current] = e.target.value; renderForm(); setStatus(""); });
+  $("reference").addEventListener("input", (e) => {
+    state.drafts[state.current] = e.target.value;
+    renderForm();
+    renderHyps(itemOf(state.current));
+    setStatus("");
+  });
 
   function useHyp(n) {
     const u = itemOf(state.current);
@@ -575,6 +617,7 @@
     state.drafts[u.key] = cleanText(h.text);
     $("reference").value = state.drafts[u.key];
     startEditing();
+    renderHyps(u);
   }
 
   // ---- saving: every verdict saves and moves on ----
@@ -722,8 +765,8 @@
     renderStats();
     renderQueue();
     if (state.current && itemOf(state.current)) {
-      renderHyps(itemOf(state.current));
       renderForm();
+      renderHyps(itemOf(state.current));
     } else {
       selectFirstTodo();
     }
