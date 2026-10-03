@@ -82,8 +82,7 @@ def router(data_dir: Path) -> APIRouter:
         """Delete a recording's audio now (not just leave it out until the daily sweep)."""
         label = _label({**body, "exclude": True, "note": body.get("note") or "discarded"})
         label["discarded"] = True
-        wav = data_dir / "sessions" / label["session"] / "utterances" / f"{label['id']}.wav"
-        wav.unlink(missing_ok=True)
+        _wav(data_dir, label).unlink(missing_ok=True)
         with labels_file.open("a") as f:
             f.write(json.dumps(label) + "\n")
         return label
@@ -91,12 +90,22 @@ def router(data_dir: Path) -> APIRouter:
     @r.post("/label/batch")
     async def save_many(body: dict) -> list[dict]:
         """Same as /label for several utterances at once (e.g. mark all clicks as noise)."""
-        labels = [_label(item) for item in body.get("items", [])]
+        labels = []
+        for item in body.get("items", []):
+            label = _label({**item, "exclude": True} if item.get("discard") else item)
+            if item.get("discard"):
+                label["discarded"] = True
+                _wav(data_dir, label).unlink(missing_ok=True)
+            labels.append(label)
         with labels_file.open("a") as f:
             f.writelines(json.dumps(label) + "\n" for label in labels)
         return labels
 
     return r
+
+
+def _wav(data_dir: Path, label: dict) -> Path:
+    return data_dir / "sessions" / label["session"] / "utterances" / f"{label['id']}.wav"
 
 
 def _label(body: dict) -> dict:

@@ -135,7 +135,7 @@
   .chip.yes { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
   .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 
-  .acts { display: grid; grid-template-columns: 1.5fr repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .acts { display: grid; grid-template-columns: 1.5fr repeat(4, minmax(0, 1fr)); gap: 6px; }
   @media (max-width: 640px) { .acts { grid-template-columns: 1fr 1fr; } .acts .primary { grid-column: 1 / 3; } }
   .act { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 10px 10px;
          white-space: nowrap; font-size: 13.5px;
@@ -163,7 +163,7 @@
     <div>
       <h1>Vecta Voice Labels</h1>
       <p>Every utterance the phone's microphone picked up. Listen, then confirm or fix what was said.
-        Audio that isn't labelled (or is left out) is deleted after 24 hours.</p>
+        Discarded audio is deleted straight away; unlabelled audio after 24 hours.</p>
     </div>
     <div class="stats" id="stats" aria-live="polite"></div>
   </header>
@@ -177,7 +177,7 @@
       <div class="bulk" id="bulk" hidden>
         <span id="bulk-count"></span>
         <button type="button" id="bulk-noise">All no speech</button>
-        <button type="button" id="bulk-out">Leave all out</button>
+        <button type="button" id="bulk-out">Discard all</button>
       </div>
       <ol id="queue"></ol>
     </nav>
@@ -225,8 +225,7 @@
           <button type="button" class="act" id="act-edit">Edit <kbd>E</kbd></button>
           <button type="button" class="act noise" id="act-noise">No speech <kbd>N</kbd></button>
           <button type="button" class="act" id="act-unsure">Unsure <kbd>U</kbd></button>
-          <button type="button" class="act out" id="act-out">Leave out <kbd>X</kbd></button>
-          <button type="button" class="act out" id="act-discard" title="Delete this recording's audio now">Discard <kbd>D</kbd></button>
+          <button type="button" class="act out" id="act-discard" title="Not worth keeping: deletes the audio now">Discard <kbd>X</kbd></button>
         </div>
         <div class="note-row">
           <label class="label" for="note">Comment <kbd>C</kbd></label>
@@ -331,7 +330,7 @@
       stat(speech ? `${Math.round((100 * right) / speech)}%` : "–", `whisper exact (${speech})`),
       stat(noise, "no speech"),
       stat(unsure, "unsure"),
-      stat(out, "left out"),
+      stat(out, "discarded"),
     );
   }
 
@@ -362,7 +361,7 @@
       const l = state.labels[u.key];
       const s = statusOf(u.key);
       const preview = !l ? (hasWords(liveText(u)) ? `whisper: ${cleanText(liveText(u))}` : KIND_NOTES[u.kind] || "no words heard")
-        : l.exclude ? "✓ left out" : l.noSpeech ? "✓ no speech" : l.reference ? `✓ ${l.reference}` : `comment: ${l.note}`;
+        : l.exclude ? "✓ discarded" : l.noSpeech ? "✓ no speech" : l.reference ? `✓ ${l.reference}` : `comment: ${l.note}`;
       const btn = el("button", {
         type: "button",
         class: "item-btn",
@@ -438,7 +437,6 @@
     const l = state.labels[key] || {};
     $("act-noise").setAttribute("aria-pressed", String(!!l.noSpeech));
     $("act-unsure").setAttribute("aria-pressed", String(!!l.unsure));
-    $("act-out").setAttribute("aria-pressed", String(!!l.exclude));
     $("ok-text").textContent = editing || key in state.drafts ? "Save" : "Correct";
     $("mode").className = editing ? "mode editing" : "mode";
     $("mode").replaceChildren(...(editing
@@ -448,7 +446,7 @@
 
     const chips = [];
     const u = itemOf(key);
-    if (l.exclude) chips.push(el("span", { class: "chip warn", text: "Left out" }));
+    if (l.exclude) chips.push(el("span", { class: "chip warn", text: "Discarded" }));
     else if (l.noSpeech) chips.push(el("span", { class: "chip", text: "No speech" }));
     else if (l.reference) chips.push(el("span", { class: "chip yes", text: "Saved" }));
     if (l.unsure) chips.push(el("span", { class: "chip warn", text: "Unsure" }));
@@ -655,7 +653,6 @@
   }
   const noSpeech = () => post({ noSpeech: true }).then((ok) => ok && setStatus("No speech", "ok"));
   const unsure = () => post({ reference: $("reference").value.trim(), unsure: true }).then((ok) => ok && setStatus("Marked unsure", "ok"));
-  const leaveOut = () => post({ exclude: true }).then((ok) => ok && setStatus("Left out", "ok"));
   // delete the audio right away; the clip leaves every view
   async function discard() {
     const u = itemOf(state.current);
@@ -689,7 +686,6 @@
   $("act-edit").addEventListener("click", startEditing);
   $("act-noise").addEventListener("click", noSpeech);
   $("act-unsure").addEventListener("click", unsure);
-  $("act-out").addEventListener("click", leaveOut);
   $("act-discard").addEventListener("click", discard);
 
   async function bulk(patch) {
@@ -701,13 +697,16 @@
       body: JSON.stringify({ items: todo.map((u) => ({ session: u.session, id: u.id, ...patch })) }),
     });
     if (!res.ok) { setStatus(`Couldn't save: HTTP ${res.status}`, "err"); return; }
-    for (const l of await res.json()) state.labels[`${l.session}/${l.id}`] = l;
+    const saved = await res.json();
+    for (const l of saved) state.labels[`${l.session}/${l.id}`] = l;
+    const gone = new Set(saved.filter((l) => l.discarded).map((l) => `${l.session}/${l.id}`));
+    state.items = state.items.filter((u) => !gone.has(u.key));
     renderStats();
     renderQueue();
     setStatus(`Labelled ${todo.length}.`, "ok");
   }
   $("bulk-noise").addEventListener("click", () => bulk({ noSpeech: true }));
-  $("bulk-out").addEventListener("click", () => bulk({ exclude: true, note: "bulk: not speech" }));
+  $("bulk-out").addEventListener("click", () => bulk({ discard: true, note: "bulk: not speech" }));
 
   // ---- keyboard ----
   // Reviewing (nothing focused): single keys, shown on the buttons. Editing the text:
@@ -733,7 +732,7 @@
       "e": startEditing,
       "n": noSpeech,
       "u": unsure,
-      "x": leaveOut,
+      "x": discard,
       "d": discard,
       "c": () => $("note").focus(),
       "ArrowDown": () => step(1),

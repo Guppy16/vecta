@@ -285,6 +285,10 @@ def test_recorder_and_labels(tmp_path: Path):
     gone = client.post("/label/discard", json={"session": "abcdef1", "id": "u_0002"}).json()
     assert gone["discarded"] and not (rec.dir / "u_0002.wav").exists()
     assert all(u["id"] != "u_0002" for u in client.get("/label/items").json()["items"])
+    rec.save(b"\x00\x00" * 160)  # u_0003
+    batch = {"items": [{"session": "abcdef1", "id": "u_0003", "discard": True}]}
+    assert client.post("/label/batch", json=batch).json()[0]["discarded"]
+    assert not (rec.dir / "u_0003.wav").exists()
     bad = {"items": [{"session": "x", "id": "u_1"}]}
     assert client.post("/label/batch", json=bad).status_code == 400
 
