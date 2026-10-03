@@ -252,7 +252,10 @@
   };
   // Whisper's non-speech markers: [BLANK_AUDIO], (music), *laughs*, or just punctuation
   const stripMarkers = (t) => (t || "").replace(/\[[^\]]*\]|\([^)]*\)|\*[^*]*\*/g, " ");
-  const hasWords = (t) => /[a-z0-9]/i.test(stripMarkers(t));
+  // chat-style models answer silence with a refusal ("I'm sorry, but I can't provide a
+  // transcription…"): that means no speech, same as scripts/asr_eval.py REFUSAL
+  const isRefusal = (t) => /^\s*i['’]?m sorry,? but i (can['’]?t|cannot|can not) provide (a|the) transcription/i.test(t || "");
+  const hasWords = (t) => !isRefusal(t) && /[a-z0-9]/i.test(stripMarkers(t));
   const liveText = (u) => (u.hyps.find((h) => h.live) || {}).text;
   const cleanText = (t) => stripMarkers(t).replace(/\s+/g, " ").trim();
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -470,7 +473,7 @@
       const has = hasWords(h.text);
       const text = el("span", { class: has ? "text" : "text none" });
       let same = false;
-      if (!has) text.textContent = h.text == null ? "(not transcribed)" : "(nothing)";
+      if (!has) text.textContent = h.text == null ? "(not transcribed)" : isRefusal(h.text) ? "(says no speech)" : "(nothing)";
       else if (!ref.trim()) text.textContent = cleanText(h.text);
       else {
         const ops = wordDiff(ref, cleanText(h.text));

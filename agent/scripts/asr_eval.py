@@ -20,6 +20,8 @@ from pathlib import Path
 
 DATA = Path(__file__).resolve().parents[2] / "data"
 MARKERS = re.compile(r"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|<think>.*?</think>", re.S)
+# chat-style models sometimes answer silence with a refusal; that means "no speech"
+REFUSAL = re.compile(r"^\s*i'?m sorry,? but i (can'?t|cannot|can not) provide (a|the) transcription", re.I)
 FILLERS = {"um", "uh", "erm", "er", "hmm", "mm", "ah"}  # labels don't transcribe them
 SPELLINGS = {  # same words, different spelling: not recognition errors
     "alright": "all right",
@@ -41,7 +43,10 @@ SPELLINGS = {  # same words, different spelling: not recognition errors
 
 
 def norm(text: str | None) -> list[str]:
-    text = MARKERS.sub(" ", (text or "").lower()).replace("’", "'")
+    text = (text or "").replace("’", "'")
+    if REFUSAL.match(text):
+        return []
+    text = MARKERS.sub(" ", text.lower())
     words = re.sub(r"[^a-z0-9' ]+", " ", text).split()
     words = " ".join(SPELLINGS.get(w, w) for w in words if w not in FILLERS).split()
     return words
