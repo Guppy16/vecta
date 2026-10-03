@@ -381,7 +381,12 @@
   }
 
   // Word diff of a model's text against the current label: what using it would change.
-  const tokNorm = (w) => w.toLowerCase().replace(/[^a-z0-9']+/g, "");
+  // fillers aren't scored (scripts/asr_eval.py FILLERS), so the diff ignores them too
+  const FILLERS = new Set(["um", "uh", "erm", "er", "hmm", "mm", "ah"]);
+  const tokNorm = (w) => {
+    const t = w.toLowerCase().replace(/[^a-z0-9']+/g, "");
+    return FILLERS.has(t) ? "" : t;
+  };
   // A label's words; "(that)" is optional and "(all|more)" accepts either (also for scoring).
   function refSlots(text) {
     return (text.match(/\([^)]*\)|[^\s()]+/g) || []).map((t) => {
