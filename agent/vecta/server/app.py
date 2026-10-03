@@ -57,8 +57,6 @@ class Settings:
     )
     earcons: bool = os.environ.get("VECTA_EARCONS", "1") != "0"
     talker: bool = os.environ.get("VECTA_TALKER", "1") != "0"  # fast local voice replies
-    # delete unlabelled recordings after a day; 0 pauses it (e.g. while a backlog is labelled)
-    prune_audio: bool = os.environ.get("VECTA_PRUNE_AUDIO", "1") != "0"
 
 
 settings = Settings()
@@ -66,14 +64,9 @@ settings = Settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    task = None
-    if settings.prune_audio:
-        task = asyncio.create_task(_prune_recordings(), name="prune-recordings")
-    else:
-        log.info("recording retention paused (VECTA_PRUNE_AUDIO=0)")
+    task = asyncio.create_task(_prune_recordings(), name="prune-recordings")
     yield
-    if task:
-        task.cancel()
+    task.cancel()
 
 
 async def _prune_recordings() -> None:
