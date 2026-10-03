@@ -21,7 +21,9 @@ from pathlib import Path
 DATA = Path(__file__).resolve().parents[2] / "data"
 MARKERS = re.compile(r"\[[^\]]*\]|\([^)]*\)|\*[^*]*\*|<think>.*?</think>", re.S)
 # chat-style models sometimes answer silence with a refusal; that means "no speech"
-REFUSAL = re.compile(r"^\s*i'?m sorry,? but i (can'?t|cannot|can not) provide (a|the) transcription", re.I)
+REFUSAL = re.compile(
+    r"^\s*i'?m sorry,? but i (can'?t|cannot|can not) provide (a|the) transcription", re.I
+)
 FILLERS = {"um", "uh", "erm", "er", "hmm", "mm", "ah"}  # labels don't transcribe them
 SPELLINGS = {  # same words, different spelling: not recognition errors
     "alright": "all right",
