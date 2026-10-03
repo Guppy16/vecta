@@ -384,33 +384,64 @@
   // fillers aren't scored (scripts/asr_eval.py FILLERS), so the diff ignores them too
   const FILLERS = new Set(["um", "uh", "erm", "er", "hmm", "mm", "ah"]);
   const tokNorm = (w) => {
-    const t = w.toLowerCase().replace(/[^a-z0-9']+/g, "");
+    const t = w.toLowerCase().replace(/’/g, "'").replace(/[^a-z0-9']+/g, "");
     return FILLERS.has(t) ? "" : t;
   };
+  // same words spelled differently (scripts/asr_eval.py SPELLINGS): not a difference
+  const SPELLINGS = {
+    "alright": "all right", "where's": "where is", "what's": "what is", "it's": "it is",
+    "that's": "that is", "there's": "there is", "i'm": "i am", "don't": "do not",
+    "doesn't": "does not", "didn't": "did not", "isn't": "is not", "can't": "cannot",
+    "wanna": "want to", "gonna": "going to", "okay": "ok",
+  };
+  // a text as words to compare: [normalised word, what to show]; a contraction shows once
+  const expand = (text) => text.split(/\s+/).flatMap((w, tok) => {
+    const t = tokNorm(w);
+    if (!t) return [];
+    return (SPELLINGS[t] || t).split(" ").map((n) => [n, w, tok]);  // [word, shown text, token]
+  });
   // A label's words; "(that)" is optional and "(all|more)" accepts either (also for scoring).
   function refSlots(text) {
-    return (text.match(/\([^)]*\)|[^\s()]+/g) || []).map((t) => {
-      if (!t.startsWith("(")) return { show: t, opts: [tokNorm(t)], optional: false };
+    return (text.match(/\([^)]*\)|[^\s()]+/g) || []).flatMap((t, tok) => {
+      if (!t.startsWith("(")) return expand(t).map(([n, show]) => ({ show, opts: [n], optional: false, tok }));
       const opts = t.slice(1, -1).split("|");
-      return { show: t, opts: opts.map(tokNorm).filter(Boolean), optional: opts.length === 1 || opts.some((o) => !tokNorm(o)) };
-    }).filter((s) => s.opts.length && s.opts.some(Boolean));
+      const words = opts.map((o) => (expand(o)[0] || [""])[0]).filter(Boolean);
+      return words.length ? [{ show: t, opts: words, optional: opts.length === 1 || opts.some((o) => !expand(o).length) }] : [];
+    });
   }
 
   function wordDiff(refText, hypText) {
     const a = refSlots(refText);
-    const b = hypText.split(/\s+/).filter((w) => tokNorm(w));  // punctuation-only tokens aren't words
-    const bn = b.map(tokNorm);
-    const ok = (i, j) => a[i].opts.includes(bn[j]);
+    const b = expand(hypText);  // [word, shown text]
+    const ok = (i, j) => a[i].opts.includes(b[j][0]);
     const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
     for (let i = a.length - 1; i >= 0; i--)
       for (let j = b.length - 1; j >= 0; j--)
         L[i][j] = ok(i, j) ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
-    const out = [];
+    const steps = [];
     let i = 0, j = 0;
     while (i < a.length || j < b.length) {
-      if (i < a.length && j < b.length && ok(i, j)) { out.push(["same", b[j]]); i++; j++; }
-      else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", b[j]]); j++; }
-      else { out.push([a[i].optional ? "skip" : "drop", a[i].show]); i++; }  // optional words may be absent
+      if (i < a.length && j < b.length && ok(i, j)) { steps.push(["same", j]); i++; j++; }
+      else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) { steps.push(["add", j]); j++; }
+      else { steps.push([a[i].optional ? "skip" : "drop", i]); i++; }  // optional words may be absent
+    }
+    // a contraction is one shown word: same only if all its parts matched
+    const tokenOp = {};
+    for (const [op, x] of steps) if (op === "same" || op === "add") {
+      const tok = b[x][2];
+      tokenOp[tok] = tokenOp[tok] === "add" || op === "add" ? "add" : "same";
+    }
+    const out = [], shown = new Set(), dropped = new Set();
+    for (const [op, x] of steps) {
+      if (op === "drop" || op === "skip") {
+        const tok = a[x].tok ?? `slot${x}`;  // one label word ("didn't") may be two slots
+        if (!dropped.has(tok)) { dropped.add(tok); out.push([op, a[x].show || a[x].opts[0]]); }
+        continue;
+      }
+      const tok = b[x][2];
+      if (shown.has(tok)) continue;
+      shown.add(tok);
+      out.push([tokenOp[tok], b[x][1]]);
     }
     return out;
   }
