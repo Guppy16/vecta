@@ -131,7 +131,7 @@
   .chip.yes { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
   .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
 
-  .acts { display: grid; grid-template-columns: 2fr repeat(4, 1fr); gap: 8px; }
+  .acts { display: grid; grid-template-columns: 2fr repeat(5, 1fr); gap: 8px; }
   @media (max-width: 640px) { .acts { grid-template-columns: 1fr 1fr; } .acts .primary { grid-column: 1 / 3; } }
   .act { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 12px;
          border: 1px solid var(--line); border-radius: 8px; background: var(--surface); cursor: pointer;
@@ -221,6 +221,7 @@
           <button type="button" class="act noise" id="act-noise">No speech <kbd>N</kbd></button>
           <button type="button" class="act" id="act-unsure">Unsure <kbd>U</kbd></button>
           <button type="button" class="act out" id="act-out">Leave out <kbd>X</kbd></button>
+          <button type="button" class="act out" id="act-discard" title="Delete this recording's audio now">Discard <kbd>D</kbd></button>
         </div>
         <div class="note-row">
           <label class="label" for="note">Comment <kbd>C</kbd></label>
@@ -611,6 +612,29 @@
   const noSpeech = () => post({ noSpeech: true }).then((ok) => ok && setStatus("No speech", "ok"));
   const unsure = () => post({ reference: $("reference").value.trim(), unsure: true }).then((ok) => ok && setStatus("Marked unsure", "ok"));
   const leaveOut = () => post({ exclude: true }).then((ok) => ok && setStatus("Left out", "ok"));
+  // delete the audio right away; the clip leaves every view
+  async function discard() {
+    const u = itemOf(state.current);
+    if (!u) return;
+    const res = await fetch("/label/discard", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: u.session, id: u.id }),
+    }).catch(() => null);
+    if (!res || !res.ok) { setStatus("Couldn't discard it.", "err"); return; }
+    const items = shown();
+    const i = items.findIndex((x) => x.key === u.key);
+    const next = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0)))
+      .find((x) => statusOf(x.key) === "todo" || state.filter === "review");
+    state.items = state.items.filter((x) => x.key !== u.key);
+    delete state.drafts[u.key];
+    audio.pause();
+    renderStats();
+    renderQueue();
+    setStatus(`Discarded ${u.id}.`, "ok");
+    if (next) select(next.key, true); else selectFirstTodo();
+  }
+
   function saveNote() {
     const l = state.labels[state.current] || {};
     post({ reference: l.reference || "", noSpeech: !!l.noSpeech, unsure: !!l.unsure, exclude: !!l.exclude })
@@ -622,6 +646,7 @@
   $("act-noise").addEventListener("click", noSpeech);
   $("act-unsure").addEventListener("click", unsure);
   $("act-out").addEventListener("click", leaveOut);
+  $("act-discard").addEventListener("click", discard);
 
   async function bulk(patch) {
     const todo = shown().filter((u) => statusOf(u.key) === "todo");
@@ -665,6 +690,7 @@
       "n": noSpeech,
       "u": unsure,
       "x": leaveOut,
+      "d": discard,
       "c": () => $("note").focus(),
       "ArrowDown": () => step(1),
       "ArrowUp": () => step(-1),

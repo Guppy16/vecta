@@ -77,6 +77,17 @@ def router(data_dir: Path) -> APIRouter:
             f.write(json.dumps(label) + "\n")
         return label
 
+    @r.post("/label/discard")
+    async def discard(body: dict) -> dict:
+        """Delete a recording's audio now (not just leave it out until the daily sweep)."""
+        label = _label({**body, "exclude": True, "note": body.get("note") or "discarded"})
+        label["discarded"] = True
+        wav = data_dir / "sessions" / label["session"] / "utterances" / f"{label['id']}.wav"
+        wav.unlink(missing_ok=True)
+        with labels_file.open("a") as f:
+            f.write(json.dumps(label) + "\n")
+        return label
+
     @r.post("/label/batch")
     async def save_many(body: dict) -> list[dict]:
         """Same as /label for several utterances at once (e.g. mark all clicks as noise)."""
