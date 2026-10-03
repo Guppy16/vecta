@@ -253,6 +253,7 @@
 
   // Most recordings are not speech: the VAD fires on clicks and room noise. Speech first.
   const GROUPS = {
+    review: { name: "To review", test: (u) => statusOf(u.key) === "unsure" },
     speech: { name: "Speech", test: (u) => u.kind === "speech" && hasWords(liveText(u)) },
     blank: { name: "No text", test: (u) => u.kind === "speech" && !hasWords(liveText(u)) },
     short: { name: "Clicks", test: (u) => u.kind === "too_short" },
@@ -260,6 +261,7 @@
     all: { name: "All", test: () => true },
   };
   const state = { items: [], labels: {}, drafts: {}, current: null, filter: "speech" };
+  let firstLoad = true;
   const shown = () => state.items.filter(GROUPS[state.filter].test);
   const itemOf = (key) => state.items.find((u) => u.key === key);
 
@@ -331,7 +333,8 @@
     $("filters").replaceChildren(...Object.entries(GROUPS).map(([key, g]) => {
       const n = state.items.filter(g.test).length;
       const todo = state.items.filter((u) => g.test(u) && statusOf(u.key) === "todo").length;
-      const b = el("button", { type: "button", "aria-pressed": String(state.filter === key), text: `${g.name} ${todo}/${n}` });
+      const b = el("button", { type: "button", "aria-pressed": String(state.filter === key),
+                               text: key === "review" ? `${g.name} ${n}` : `${g.name} ${todo}/${n}` });
       b.addEventListener("click", () => { state.filter = key; renderQueue(); selectFirstTodo(); });
       return b;
     }));
@@ -532,6 +535,12 @@
   }
 
   function nextTodo(fromKey) {
+    if (state.filter === "review") {  // the saved one has left this view: take the next flagged one
+      const left = shown().filter((x) => x.key !== fromKey);
+      if (left.length) setTimeout(() => select(left[0].key, true), 200);
+      else setStatus("All reviewed.", "ok");
+      return;
+    }
     const items = shown();
     const i = items.findIndex((x) => x.key === fromKey);
     const next = items.slice(i + 1).concat(items.slice(0, Math.max(i, 0))).find((x) => statusOf(x.key) === "todo");
@@ -575,7 +584,9 @@
       const res = await fetch("/label", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ session: u.session, id: u.id, note: $("note").value, ...label }),
+        // a verdict answers Claude's re-listen request, so that note goes
+        body: JSON.stringify({ session: u.session, id: u.id, ...label,
+                               note: $("note").value.replace(/\s*\[Claude: please re-listen[^\]]*\]/, "").trim() }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `HTTP ${res.status}`);
       state.labels[key] = await res.json();
@@ -679,6 +690,8 @@
       $("banner").hidden = false;
       return;
     }
+    if (firstLoad && state.items.some(GROUPS.review.test)) state.filter = "review";  // flagged ones first
+    firstLoad = false;
     renderStats();
     renderQueue();
     if (state.current && itemOf(state.current)) {
