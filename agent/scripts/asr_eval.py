@@ -47,37 +47,53 @@ def norm(text: str | None) -> list[str]:
     return words
 
 
-# one reference slot: the words it accepts, and whether it may be left out
-Slot = tuple[frozenset[str], bool]
+# One reference slot: the word sequences it accepts. A plain word accepts itself; "(that)"
+# accepts "that" or nothing; "(don't|didn't)" accepts either (as "do not" / "did not").
+Slot = tuple[tuple[str, ...], ...]
 
 
 def ref_slots(text: str) -> list[Slot]:
-    """A label as slots: plain words, "(word)" optional, "(a|b)" either a or b."""
     slots: list[Slot] = []
     for token in re.findall(r"\([^)]*\)|[^\s()]+", text):
         if token.startswith("("):
-            options = token[1:-1].split("|")
-            words = frozenset(w for o in options for w in norm(o)[:1])
-            optional = len(options) == 1 or any(not norm(o) for o in options)
-            if words:
-                slots.append((words, optional))
+            options = {tuple(norm(o)) for o in token[1:-1].split("|")}
+            if "|" not in token:
+                options.add(())  # a single bracketed word is optional
+            if any(options):
+                slots.append(tuple(sorted(options)))
         else:
-            slots.extend((frozenset([w]), False) for w in norm(token))
+            slots.extend(((w,),) for w in norm(token))
     return slots
 
 
 def edits(ref: list[Slot], hyp: list[str]) -> int:
-    """Word-level edit distance; an optional slot can be skipped for free."""
-    prev = [0] * (len(hyp) + 1)
-    for j in range(1, len(hyp) + 1):
-        prev[j] = j
-    for words, optional in ref:
-        skip = 0 if optional else 1
-        cur = [prev[0] + skip]
-        for j, h in enumerate(hyp, 1):
-            cur.append(min(prev[j] + skip, cur[j - 1] + 1, prev[j - 1] + (h not in words)))
-        prev = cur
-    return prev[-1]
+    """Fewest word edits turning the hypothesis into some reading of the reference.
+
+    A slot is matched by any of its sequences (an empty one makes it free to skip); a
+    missing slot costs its shortest reading, a wrong word in its place costs 1.
+    """
+    n, m = len(ref), len(hyp)
+    best = [[0] * (m + 1) for _ in range(n + 1)]
+    for j in range(m + 1):
+        best[n][j] = m - j
+    for i in range(n - 1, -1, -1):
+        shortest = min(len(o) for o in ref[i])
+        for j in range(m, -1, -1):
+            cost = best[i + 1][j] + shortest  # slot missing (free when it allows nothing)
+            if j < m:
+                cost = min(cost, best[i][j + 1] + 1)  # extra word in the hypothesis
+                if shortest:
+                    cost = min(cost, best[i + 1][j + 1] + 1)  # wrong word in its place
+            for option in ref[i]:
+                k = len(option)
+                if k and tuple(hyp[j : j + k]) == option:
+                    cost = min(cost, best[i + 1][j + k])
+            best[i][j] = cost
+    return best[0][0]
+
+
+def ref_words(ref: list[Slot]) -> int:
+    return sum(min(len(o) for o in slot) for slot in ref)
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -107,7 +123,7 @@ def main(show: bool) -> None:
         if not keys:
             continue
         errs = sum(edits(ref_slots(refs[k]), norm(by_key[k])) for k in keys)
-        words = sum(sum(not opt for _, opt in ref_slots(refs[k])) for k in keys)
+        words = sum(ref_words(ref_slots(refs[k])) for k in keys)
         exact = sum(edits(ref_slots(refs[k]), norm(by_key[k])) == 0 for k in keys)
         print(f"{backend:28} {len(keys):5} {errs / words:6.1%} {exact:3}/{len(keys)}")
         if show:

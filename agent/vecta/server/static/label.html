@@ -401,29 +401,46 @@
     return (SPELLINGS[t] || t).split(" ").map((n) => [n, w, tok]);  // [word, shown text, token]
   });
   // A label's words; "(that)" is optional and "(all|more)" accepts either (also for scoring).
+  // A label as slots (same rules as scripts/asr_eval.py): a plain word, "(that)" = that or
+  // nothing, "(don't|didn't)" = either, each option a word sequence ("do not").
   function refSlots(text) {
     return (text.match(/\([^)]*\)|[^\s()]+/g) || []).flatMap((t, tok) => {
-      if (!t.startsWith("(")) return expand(t).map(([n, show]) => ({ show, opts: [n], optional: false, tok }));
-      const opts = t.slice(1, -1).split("|");
-      const words = opts.map((o) => (expand(o)[0] || [""])[0]).filter(Boolean);
-      return words.length ? [{ show: t, opts: words, optional: opts.length === 1 || opts.some((o) => !expand(o).length) }] : [];
+      if (!t.startsWith("(")) return expand(t).map(([n, show]) => ({ show, opts: [[n]], tok }));
+      const opts = t.slice(1, -1).split("|").map((o) => expand(o).map(([n]) => n));
+      if (!t.includes("|")) opts.push([]);  // a single bracketed word is optional
+      return opts.some((o) => o.length) ? [{ show: t.replace(/\s+/g, ""), opts, tok }] : [];
     });
   }
 
   function wordDiff(refText, hypText) {
     const a = refSlots(refText);
-    const b = expand(hypText);  // [word, shown text]
-    const ok = (i, j) => a[i].opts.includes(b[j][0]);
-    const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
-    for (let i = a.length - 1; i >= 0; i--)
-      for (let j = b.length - 1; j >= 0; j--)
-        L[i][j] = ok(i, j) ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+    const b = expand(hypText);  // [word, shown text, token]
+    const n = a.length, m = b.length;
+    const matches = (i, j, opt) => opt.length && opt.every((w, k) => b[j + k] && b[j + k][0] === w);
+    // f[i][j]: fewest edits aligning slots i.. with words j..
+    const f = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let j = 0; j <= m; j++) f[n][j] = m - j;
+    for (let i = n - 1; i >= 0; i--) {
+      const shortest = Math.min(...a[i].opts.map((o) => o.length));
+      for (let j = m; j >= 0; j--) {
+        let c = f[i + 1][j] + shortest;
+        if (j < m) c = Math.min(c, f[i][j + 1] + 1, shortest ? f[i + 1][j + 1] + 1 : Infinity);
+        for (const o of a[i].opts) if (matches(i, j, o)) c = Math.min(c, f[i + 1][j + o.length]);
+        f[i][j] = c;
+      }
+    }
     const steps = [];
     let i = 0, j = 0;
-    while (i < a.length || j < b.length) {
-      if (i < a.length && j < b.length && ok(i, j)) { steps.push(["same", j]); i++; j++; }
-      else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) { steps.push(["add", j]); j++; }
-      else { steps.push([a[i].optional ? "skip" : "drop", i]); i++; }  // optional words may be absent
+    while (i < n || j < m) {
+      if (i < n) {
+        const shortest = Math.min(...a[i].opts.map((o) => o.length));
+        const hit = a[i].opts.find((o) => matches(i, j, o) && f[i][j] === f[i + 1][j + o.length]);
+        if (hit) { for (let k = 0; k < hit.length; k++) steps.push(["same", j + k]); i++; j += hit.length; continue; }
+        if (!shortest && f[i][j] === f[i + 1][j]) { steps.push(["skip", i]); i++; continue; }
+        if (j < m && f[i][j] === f[i][j + 1] + 1) { steps.push(["add", j]); j++; continue; }
+        if (j < m && shortest && f[i][j] === f[i + 1][j + 1] + 1) { steps.push(["drop", i], ["add", j]); i++; j++; continue; }
+        steps.push(["drop", i]); i++;
+      } else { steps.push(["add", j]); j++; }
     }
     // a contraction is one shown word: same only if all its parts matched
     const tokenOp = {};
