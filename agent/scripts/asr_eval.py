@@ -1,5 +1,8 @@
 """Word error rate of each ASR backend against the labels made at /label.
 
+Labels may mark uncertain words: "(that)" is optional (no penalty either way) and
+"(all|more)" accepts either word; optional words don't count towards the word total.
+
 References come from data/labels.jsonl (the last label per utterance; ones with text,
 not left out). Hypotheses: the live Whisper text in utterances.jsonl and any backend in
 utterances/hyps.jsonl. Text is normalised (case, punctuation, Whisper's [BLANK_AUDIO]-
@@ -44,13 +47,35 @@ def norm(text: str | None) -> list[str]:
     return words
 
 
-def edits(ref: list[str], hyp: list[str]) -> int:
-    """Word-level Levenshtein distance."""
-    prev = list(range(len(hyp) + 1))
-    for i, r in enumerate(ref, 1):
-        cur = [i]
+# one reference slot: the words it accepts, and whether it may be left out
+Slot = tuple[frozenset[str], bool]
+
+
+def ref_slots(text: str) -> list[Slot]:
+    """A label as slots: plain words, "(word)" optional, "(a|b)" either a or b."""
+    slots: list[Slot] = []
+    for token in re.findall(r"\([^)]*\)|[^\s()]+", text):
+        if token.startswith("("):
+            options = token[1:-1].split("|")
+            words = frozenset(w for o in options for w in norm(o)[:1])
+            optional = len(options) == 1 or any(not norm(o) for o in options)
+            if words:
+                slots.append((words, optional))
+        else:
+            slots.extend((frozenset([w]), False) for w in norm(token))
+    return slots
+
+
+def edits(ref: list[Slot], hyp: list[str]) -> int:
+    """Word-level edit distance; an optional slot can be skipped for free."""
+    prev = [0] * (len(hyp) + 1)
+    for j in range(1, len(hyp) + 1):
+        prev[j] = j
+    for words, optional in ref:
+        skip = 0 if optional else 1
+        cur = [prev[0] + skip]
         for j, h in enumerate(hyp, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (r != h)))
+            cur.append(min(prev[j] + skip, cur[j - 1] + 1, prev[j - 1] + (h not in words)))
         prev = cur
     return prev[-1]
 
@@ -81,13 +106,13 @@ def main(show: bool) -> None:
         keys = [k for k in refs if k in by_key]
         if not keys:
             continue
-        errs = sum(edits(norm(refs[k]), norm(by_key[k])) for k in keys)
-        words = sum(len(norm(refs[k])) for k in keys)
-        exact = sum(norm(refs[k]) == norm(by_key[k]) for k in keys)
+        errs = sum(edits(ref_slots(refs[k]), norm(by_key[k])) for k in keys)
+        words = sum(sum(not opt for _, opt in ref_slots(refs[k])) for k in keys)
+        exact = sum(edits(ref_slots(refs[k]), norm(by_key[k])) == 0 for k in keys)
         print(f"{backend:28} {len(keys):5} {errs / words:6.1%} {exact:3}/{len(keys)}")
         if show:
             for k in keys:
-                if norm(refs[k]) != norm(by_key[k]):
+                if edits(ref_slots(refs[k]), norm(by_key[k])):
                     print(f"    {k[1]}  ref: {refs[k]!r}\n           hyp: {by_key[k]!r}")
 
 

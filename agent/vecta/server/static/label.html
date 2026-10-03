@@ -220,6 +220,7 @@
         </div>
         <textarea id="reference" readonly placeholder="(nothing heard) — press E to type, or N if it isn't speech"></textarea>
         <div class="derived" id="derived"></div>
+        <div class="mode">Unsure of a word? <span class="mono">(that)</span> = optional, <span class="mono">(all|more)</span> = either. Models aren't penalised for those.</div>
         <div class="acts">
           <button type="button" class="act primary" id="act-ok"><span id="ok-text">Correct</span> <kbd>Enter</kbd></button>
           <button type="button" class="act" id="act-edit">Edit <kbd>E</kbd></button>
@@ -381,21 +382,30 @@
 
   // Word diff of a model's text against the current label: what using it would change.
   const tokNorm = (w) => w.toLowerCase().replace(/[^a-z0-9']+/g, "");
+  // A label's words; "(that)" is optional and "(all|more)" accepts either (also for scoring).
+  function refSlots(text) {
+    return (text.match(/\([^)]*\)|[^\s()]+/g) || []).map((t) => {
+      if (!t.startsWith("(")) return { show: t, opts: [tokNorm(t)], optional: false };
+      const opts = t.slice(1, -1).split("|");
+      return { show: t, opts: opts.map(tokNorm).filter(Boolean), optional: opts.length === 1 || opts.some((o) => !tokNorm(o)) };
+    }).filter((s) => s.opts.length && s.opts.some(Boolean));
+  }
+
   function wordDiff(refText, hypText) {
-    // punctuation-only tokens ("-", "...") aren't words: leave them out of the comparison
-    const words = (t) => t.split(/\s+/).filter((w) => tokNorm(w));
-    const a = words(refText), b = words(hypText);
-    const an = a.map(tokNorm), bn = b.map(tokNorm);
+    const a = refSlots(refText);
+    const b = hypText.split(/\s+/).filter((w) => tokNorm(w));  // punctuation-only tokens aren't words
+    const bn = b.map(tokNorm);
+    const ok = (i, j) => a[i].opts.includes(bn[j]);
     const L = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
     for (let i = a.length - 1; i >= 0; i--)
       for (let j = b.length - 1; j >= 0; j--)
-        L[i][j] = an[i] && an[i] === bn[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+        L[i][j] = ok(i, j) ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
     const out = [];
     let i = 0, j = 0;
     while (i < a.length || j < b.length) {
-      if (i < a.length && j < b.length && an[i] && an[i] === bn[j]) { out.push(["same", b[j]]); i++; j++; }
+      if (i < a.length && j < b.length && ok(i, j)) { out.push(["same", b[j]]); i++; j++; }
       else if (j < b.length && (i >= a.length || L[i][j + 1] >= L[i + 1][j])) { out.push(["add", b[j]]); j++; }
-      else { out.push(["drop", a[i]]); i++; }
+      else { out.push([a[i].optional ? "skip" : "drop", a[i].show]); i++; }  // optional words may be absent
     }
     return out;
   }
@@ -411,8 +421,9 @@
       else if (!ref.trim()) text.textContent = cleanText(h.text);
       else {
         const ops = wordDiff(ref, cleanText(h.text));
-        same = ops.every(([op]) => op === "same");
+        same = ops.every(([op]) => op === "same" || op === "skip");
         for (const [op, w] of ops) {
+          if (op === "skip") continue;
           text.append(op === "same" ? w : el(op === "add" ? "ins" : "del", { class: op, text: w }), " ");
         }
         if (same) text.append(el("span", { class: "same-tag", text: "same" }));
