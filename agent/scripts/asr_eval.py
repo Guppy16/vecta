@@ -112,6 +112,7 @@ def main(show: bool) -> None:
     for rec in load_jsonl(DATA / "labels.jsonl"):
         labels[(rec["session"], rec["id"])] = rec
     refs = {k: r["reference"] for k, r in labels.items() if r["reference"] and not r["exclude"]}
+    silent = {k for k, r in labels.items() if r["noSpeech"] and not r["exclude"]}
 
     hyps: dict[str, dict] = defaultdict(dict)  # backend -> (session, id) -> text
     for meta in (DATA / "sessions").glob("*/utterances/utterances.jsonl"):
@@ -137,6 +138,18 @@ def main(show: bool) -> None:
             for k in keys:
                 if edits(ref_slots(refs[k]), norm(by_key[k])):
                     print(f"    {k[1]}  ref: {refs[k]!r}\n           hyp: {by_key[k]!r}")
+    report_silence(silent, hyps)
+
+
+def report_silence(silent: set, hyps: dict[str, dict]) -> None:
+    """On clips labelled 'no speech', any words a backend writes are invented."""
+    print(f"\n{len(silent)} clips labelled no speech\n")
+    print(f"{'backend':28} {'clips':>5} {'invented words on':>18}")
+    for backend, by_key in sorted(hyps.items()):
+        keys = [k for k in silent if k in by_key]
+        if keys:
+            bad = [k for k in keys if norm(by_key[k])]
+            print(f"{backend:28} {len(keys):5} {len(bad):12} clips")
 
 
 if __name__ == "__main__":
