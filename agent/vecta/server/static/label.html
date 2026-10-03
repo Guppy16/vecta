@@ -257,6 +257,27 @@
   const isRefusal = (t) => /^\s*i['’]?m sorry,? but i (can['’]?t|cannot|can not) provide (a|the) transcription/i.test(t || "");
   const hasWords = (t) => !isRefusal(t) && /[a-z0-9]/i.test(stripMarkers(t));
   const liveText = (u) => (u.hyps.find((h) => h.live) || {}).text;
+  // Whisper's well-known phrases on silence don't count as hearing speech
+  const SILENCE_PHRASES = /^\W*(thank you|thanks for watching|thank you for watching|you|bye)\W*$/i;
+  // A model that invented words on most clips you labelled "no speech" can't be trusted to
+  // say a clip has speech in it (recomputed on every refresh as labels come in).
+  function unreliableOnSilence() {
+    const seen = {}, invented = {};
+    for (const u of state.items) {
+      const l = state.labels[u.key];
+      if (!l || !l.noSpeech || l.exclude) continue;
+      for (const h of u.hyps) {
+        if (h.live) continue;
+        seen[h.backend] = (seen[h.backend] || 0) + 1;
+        if (hasWords(h.text)) invented[h.backend] = (invented[h.backend] || 0) + 1;
+      }
+    }
+    return new Set(Object.keys(seen).filter((b) => seen[b] >= 10 && (invented[b] || 0) / seen[b] > 0.5));
+  }
+  let unreliable = new Set();
+  // how many trustworthy models heard real words in a clip Whisper-Base heard nothing in
+  const heardBy = (u) => u.hyps.filter((h) => !h.live && !unreliable.has(h.backend) && hasWords(h.text)
+                                              && !SILENCE_PHRASES.test(cleanText(h.text))).length;
   const cleanText = (t) => stripMarkers(t).replace(/\s+/g, " ").trim();
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9' ]+/g, " ").replace(/\s+/g, " ").trim();
 
@@ -264,7 +285,8 @@
   const GROUPS = {
     review: { name: "To review", test: (u) => statusOf(u.key) === "unsure" },
     speech: { name: "Speech", test: (u) => u.kind === "speech" && hasWords(liveText(u)) },
-    blank: { name: "No text", test: (u) => u.kind === "speech" && !hasWords(liveText(u)) },
+    unclear: { name: "Unclear", test: (u) => u.kind === "speech" && !hasWords(liveText(u)) && heardBy(u) > 0 },
+    silent: { name: "Silent", test: (u) => u.kind === "speech" && !hasWords(liveText(u)) && heardBy(u) === 0 },
     short: { name: "Clicks", test: (u) => u.kind === "too_short" },
     ours: { name: "Our voice", test: (u) => u.kind === "ours" },
     all: { name: "All", test: () => true },
@@ -348,8 +370,10 @@
       return b;
     }));
     const todo = shown().filter((u) => statusOf(u.key) === "todo");
-    $("bulk").hidden = !["blank", "short", "ours"].includes(state.filter) || !todo.length;
-    $("bulk-count").textContent = `${todo.length} to do here:`;
+    $("bulk").hidden = !["silent", "short", "ours"].includes(state.filter) || !todo.length;
+    $("bulk-count").textContent = state.filter === "silent" && unreliable.size
+      ? `${todo.length} to do (ignoring ${[...unreliable].join(", ")}: they invent words on silence):`
+      : `${todo.length} to do here:`;
   }
 
   function renderQueue() {
@@ -826,6 +850,7 @@
       $("banner").hidden = false;
       return;
     }
+    unreliable = unreliableOnSilence();
     if (firstLoad && state.items.some(GROUPS.review.test)) state.filter = "review";  // flagged ones first
     firstLoad = false;
     renderStats();
