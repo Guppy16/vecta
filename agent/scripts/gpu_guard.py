@@ -21,7 +21,7 @@ from pathlib import Path
 DATA = Path(__file__).resolve().parents[2] / "data"
 GIB = 2**30
 WARN_AVAIL, KILL_AVAIL = 20 * GIB, 12 * GIB  # MemAvailable
-WARN_GTT, KILL_GTT = 0.80, 0.90  # share of the GTT pool in use
+WARN_GTT, KILL_GTT = 0.85, 0.90  # share of the GTT pool in use
 # model servers started by experiments; Lemonade's own servers live under /var/cache/lemonade
 MODEL_EXE = re.compile(r"(^|/)(llama-server|llama-mtmd-cli|llama-omni-cli|python[\d.]*)(\s|$)")
 EXPERIMENT_DIR = re.compile(r"/work/|/\.scratch/")  # the container's mount, or a scratch dir
