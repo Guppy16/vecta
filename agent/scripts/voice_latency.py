@@ -1,7 +1,7 @@
 """Voice-to-voice latency of the fast loop, measured on the box without a phone.
 
 For each question: Kokoro speaks it (standing in for the user), then
-Whisper -> talker -> Kokoro, timing until the reply is first audible (silence at
+talker (hearing the audio) -> Kokoro, timing until the reply is first audible (silence at
 the start of the audio counts as waiting), both the old way (whole reply, then
 whole synthesis, untrimmed) and streaming (SpeechStream).
 The listener's end-of-speech wait is added on top: END_SILENCE_MS for the old
@@ -17,7 +17,7 @@ import time
 
 import numpy as np
 
-from vecta.server.audio import END_SILENCE_MS, SPECULATE_SILENCE_MS, Transcriber
+from vecta.server.audio import END_SILENCE_MS, SPECULATE_SILENCE_MS
 from vecta.server.speech import Speaker, SpeechStream
 from vecta.server.talker import Talker
 
@@ -31,17 +31,16 @@ BRIEFING = "The user is setting up a Danfoss TP5000 programmable room thermostat
 
 
 async def main() -> None:
-    stt, tts = Transcriber(), Speaker()
+    tts = Speaker()
     speech = {q: await tts.synthesize(q) for q in QUESTIONS}
     rows: dict[str, list[int]] = {"old": [], "stream": []}
     for mode in ("old", "stream") * 3:
         talker = Talker(briefing=BRIEFING)
         for q in QUESTIONS:
             t0 = time.monotonic()
-            text = await stt.transcribe(speech[q])
-            t_stt = time.monotonic()
+            heard = talker.hear(speech[q])
             if mode == "old":
-                reply = await talker.turn(text)
+                reply = await talker.turn()
                 lead = 0.0
                 if reply.text:
                     lead = _lead_silence(await tts.synthesize(reply.text))
@@ -53,9 +52,10 @@ async def main() -> None:
                     leads.append(_lead_silence(pcm))
 
                 voice = SpeechStream(tts, sink)
-                reply = await talker.turn(text, voice.write)
+                reply = await talker.turn(on_text=voice.write)
                 await voice.finish()
                 first = (voice.first_audio_at or time.monotonic()) + (leads[0] if leads else 0)
+            text = await heard
             if not reply.text:
                 continue
             work = int((first - t0) * 1000)
@@ -65,8 +65,8 @@ async def main() -> None:
                 ms = max(END_SILENCE_MS, SPECULATE_SILENCE_MS + work)
             rows[mode].append(ms)
             print(
-                f"{mode:6} stt {int((t_stt - t0) * 1000):4} ms  v2v {ms:5} ms  "
-                f"first text {reply.first_text_ms} ms  {reply.text!r}"
+                f"{mode:6} v2v {ms:5} ms  first text {reply.first_text_ms} ms  "
+                f"heard {text!r} -> {reply.text!r}"
             )
     for mode, xs in rows.items():
         print(f"{mode}: median voice-to-voice {statistics.median(xs)} ms over {len(xs)} replies")

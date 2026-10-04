@@ -26,21 +26,14 @@ from fastapi.responses import FileResponse
 
 from vecta.protocol import messages as m
 from vecta.server import labels
-from vecta.server.audio import Listener, Recorder, Transcriber
+from vecta.server.audio import Listener, Recorder
 from vecta.server.frames import Frame
 from vecta.server.ground import MarkerSpec, MarkerTracker
 from vecta.server.keyframes import Keyframer
 from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, SpeechStream, earcon
-from vecta.server.talker import (
-    ASKS_CLOSER,
-    HOLDING_LINE,
-    INSTRUCTION_HINTS,
-    LOOK_HINTS,
-    Reply,
-    Talker,
-)
+from vecta.server.talker import ASKS_CLOSER, INSTRUCTION_HINTS, Reply, Talker
 from vecta.server.vlm import Vlm
 from vecta.server.watch import Watcher
 
@@ -85,7 +78,6 @@ app = FastAPI(title="vecta", lifespan=lifespan)
 app.include_router(labels.router(settings.data_dir))
 store = SessionStore(settings.data_dir)
 vlm = Vlm()
-stt = Transcriber()
 tts = Speaker()
 
 
@@ -162,14 +154,14 @@ def _talker(session: Session) -> Talker:
 
 
 async def _listen(session: Session, peer: Peer, track: MediaStreamTrack) -> None:
-    def on_text(text: str, started: float, ended: float, committed: asyncio.Event) -> asyncio.Task:
-        return asyncio.create_task(_on_voice(session, peer, text, started, ended, committed))
+    def on_speech(pcm: bytes, started: float, ended: float, committed: asyncio.Event):
+        return asyncio.create_task(_on_voice(session, peer, pcm, started, ended, committed))
 
     def barge_in() -> None:
         if lv := live.get(session.id):
             _stop_talking(lv)
 
-    listener = Listener(stt, on_text, Recorder(session.dir / "utterances"), barge_in)
+    listener = Listener(on_speech, Recorder(session.dir / "utterances"), barge_in)
     if lv := live.get(session.id):
         lv.listener = listener
     await listener.run(track)
@@ -186,44 +178,52 @@ def _stop_talking(lv: Live) -> None:
 async def _on_voice(
     session: Session,
     peer: Peer,
-    text: str,
+    pcm: bytes,
     started: float,
     ended: float,
     committed: asyncio.Event,
-) -> None:
-    """One utterance. The talker starts on it straight away; everything the user or the
-    inbox can see waits for `committed` (the listener may still decide it was only a pause
-    and cancel this task)."""
+) -> str:
+    """One utterance. The talker hears it and starts deciding straight away while the same
+    audio is transcribed; everything the user or the inbox can see waits for `committed`
+    (the listener may still decide it was only a pause and cancel this task). Returns the
+    transcript."""
     lv = live.get(session.id)
-    talk = None
-    if lv and lv.follow_up:
+    if lv is None:
+        return ""
+    if lv.follow_up:
         lv.follow_up.cancel()  # they are talking again: stop waiting for the close-up
-    if settings.talker and lv:
-        talk = asyncio.create_task(_talk(lv, text, ended, committed))
+    saved = list(lv.talker.history)
+    heard = lv.talker.hear(pcm)
+    talk = asyncio.create_task(_talk(lv, heard, ended, committed)) if settings.talker else None
     try:
         await committed.wait()
     except asyncio.CancelledError:
+        heard.cancel()
         if talk:
             talk.cancel()
+        lv.talker.history[:] = saved  # it was only a pause; the user is still talking
         raise
-    session.inbox.append("voice", text=text, started_at=round(started, 3))
-    peer.send(m.Transcript(text=text))
     if settings.earcons:
         peer.voice.enqueue(base64.b64decode(earcon("heard").data))  # instant "got that"
+    text = await heard
+    if text:
+        session.inbox.append("voice", text=text, started_at=round(started, 3))
+        peer.send(m.Transcript(text=text))
     if talk:
         await talk
+    return text
 
 
-async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) -> None:
+async def _talk(lv: Live, heard: asyncio.Task[str], ended_at: float, committed: asyncio.Event):
     """Fast loop: the talker answers (or stays quiet) and its reply is spoken while it is
     still being written; escalations go to the main agent's inbox.
 
-    Runs speculatively: nothing is sent, logged or played until `committed` is set, and if
-    the task is cancelled the talker forgets the turn. `ended_at` is when the user stopped
-    speaking (epoch s), for the voice-to-voice latency.
+    Runs speculatively: nothing is sent, logged or played until `committed` is set; if the
+    task is cancelled, _on_voice makes the talker forget the turn. `heard` gives the
+    transcript; `ended_at` is when the user stopped speaking (epoch s), for the
+    voice-to-voice latency.
     """
     s = lv.peer.session
-    saved = list(lv.talker.history)
 
     async def sink(pcm: bytes) -> None:
         await committed.wait()
@@ -232,36 +232,25 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
     voice = SpeechStream(tts, sink, lv.voices)
     guard = _InstructionGuard(voice)
     try:
-        # (no up-front how-to keyword check: the prompt now decides better, see talker_eval.py;
-        # the instruction guard below still stops improvised steps)
-        if LOOK_HINTS.search(text):
-            # obviously about the camera: skip the round trip where the talker asks to look
-            lv.talker.heard(text)
-            lv.talker.asked("look")
-            reply = await _look_and_answer(lv, text, guard, committed)
-        else:
-            reply = await lv.talker.turn(text, guard)
-            if reply.tool == "look":
-                reply = await _look_and_answer(lv, text, guard, committed)
+        reply = await lv.talker.turn(on_text=guard)
+        if reply.tool == "look":
+            reply = await _look_and_answer(lv, heard, guard, committed)
         if guard.tripped:  # it started explaining how to operate something: that's ours
             voice.drop_unsaid()
             reply = Reply(guard.said.strip(), True, reply.latency_ms)
-            lv.talker.said(HOLDING_LINE, escalate=True)
-        elif guard.holding:  # the hand-over line: nothing to show or say, the chime plays
-            reply = Reply("", True, reply.latency_ms)
+            lv.talker.said("", escalate=True)
         await committed.wait()
     except asyncio.CancelledError:
         voice.cancel()
-        lv.talker.history[:] = saved  # it was only a pause; the user is still talking
         raise
     except Exception as e:
         log.warning("talker failed: %s", e)
         voice.cancel()
         return
     if reply.escalate:
-        s.inbox.append("escalate", text=text, context=lv.talker.history[-6:])
+        s.inbox.append("escalate", text=await heard, context=_context(lv.talker))
         lv.peer.send(m.Status(phase="thinking"))
-        if not reply.text or guard.holding:  # handed over: a short chime says "working on it"
+        if not reply.text:  # handed over: a short chime says "working on it"
             lv.peer.voice.enqueue(base64.b64decode(earcon("thinking").data))
     if reply.text:
         lv.peer.send(m.AgentMessage(text=reply.text, status="answer", latency_ms=reply.latency_ms))
@@ -278,6 +267,14 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
         )
 
 
+def _context(talker: Talker) -> list[dict]:
+    """The last few turns for the inbox, with audio not yet transcribed left out."""
+    return [
+        {**msg, "content": msg["content"] if isinstance(msg["content"], str) else "[audio]"}
+        for msg in talker.history[-6:]
+    ]
+
+
 class _InstructionGuard:
     """Sits between the talker's streaming text and the voice: once the reply turns into
     instructions (press this, hold that), nothing more of it is spoken."""
@@ -287,18 +284,11 @@ class _InstructionGuard:
         self._text = ""
         self.said = ""  # the part let through before it tripped
         self.tripped = False
-        self.holding = False
 
     def __call__(self, delta: str) -> None:
-        if self.tripped or self.holding:
+        if self.tripped:
             return
         self._text += delta
-        start = self._text.lstrip()
-        if start.startswith(HOLDING_LINE[:24]):
-            self.holding = True  # the hand-over line is never spoken; a chime plays instead
-            return
-        if HOLDING_LINE.startswith(start):
-            return  # might be the hand-over line: wait until it can be told apart
         if INSTRUCTION_HINTS.search(self._text):
             self.tripped = True
             return
@@ -306,8 +296,10 @@ class _InstructionGuard:
         self.said = self._text
 
 
-async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Event) -> Reply:
-    """The talker's one tool: it looks at the current frame itself (Qwen3.6 is multimodal)."""
+async def _look_and_answer(
+    lv: Live, heard: asyncio.Task[str], on_text, committed: asyncio.Event
+) -> Reply:
+    """The talker's one tool: it looks at the current frame itself (Nemotron is multimodal)."""
     s = lv.peer.session
     frame = s.frames.latest()
     if frame is None:
@@ -326,9 +318,10 @@ async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Even
     looks.mkdir(exist_ok=True)
     seen = looks / f"look_{int(time.time() * 1000)}.jpg"
     seen.write_bytes(jpeg)
-    s.inbox.append("verify", question=text, answer=reply.text, frame=str(seen))
+    question = await heard
+    s.inbox.append("verify", question=question, answer=reply.text, frame=str(seen))
     if reply.text and ASKS_CLOSER.search(reply.text):
-        lv.follow_up = asyncio.create_task(_follow_up(lv, text))
+        lv.follow_up = asyncio.create_task(_follow_up(lv, question))
     return reply
 
 

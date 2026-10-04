@@ -14,12 +14,27 @@ The set lives in data/calibration/talker_turns.jsonl (gitignored: it is real spe
 import argparse
 import asyncio
 import json
+import re
 from pathlib import Path
 
 from vecta.server import talker as talker_mod
-from vecta.server.talker import HOWTO_HINTS, INSTRUCTION_HINTS, LOOK_HINTS, Talker
+from vecta.server.talker import INSTRUCTION_HINTS, Talker, _decision
 
 DEFAULT_SET = Path(__file__).resolve().parents[2] / "data" / "calibration" / "talker_turns.jsonl"
+# The keyword overrides the server used to apply to the transcript before the talker saw it.
+# The server hears audio now, so they only remain here, to compare against old scores.
+HOWTO_HINTS = re.compile(
+    r"\b(how (do|can|should|to)|what does|what is th(is|at) (button|symbol|icon|light)|set|"
+    r"program|schedule|adjust|change|turn (it )?(on|off|up|down)|why (does|is|won.t|doesn.t)|"
+    r"explain|instructions?|steps?)\b",
+    re.I,
+)
+LOOK_HINTS = re.compile(
+    r"\b(see|seeing|look|looking|show|showing|display|screen|camera|in view|what is this|"
+    r"what's this|read|reading|says|label)\b",
+    re.I,
+)
+HOLDING_LINE = "Let me work that out properly, one moment."  # the old talker's hand-over line
 
 
 def action(reply: talker_mod.Reply) -> str:
@@ -47,7 +62,7 @@ async def main(cases: list[dict], persona: str | None) -> None:
     raw_ok = backed_ok = 0
     for case in cases:
         t = Talker(briefing=case["briefing"])
-        t.history = list(case["history"])
+        t.history = [_current_format(msg) for msg in case["history"]]
         reply = await t.turn(case["utterance"])
         raw = action(reply)
         backed = with_backstops(case["utterance"], raw, reply)
@@ -63,6 +78,22 @@ async def main(cases: list[dict], persona: str | None) -> None:
         f"raw prompt: {raw_ok}/{n} ({raw_ok / n:.0%})   with backstops: {backed_ok}/{n} "
         f"({backed_ok / n:.0%})"
     )
+
+
+def _current_format(msg: dict) -> dict:
+    """The set was recorded with the old {"reply", "escalate"} / {"tool"} talker turns."""
+    if msg["role"] != "assistant":
+        return msg
+    try:
+        old = json.loads(msg["content"])
+    except json.JSONDecodeError:
+        return msg
+    if "action" in old:
+        return msg
+    reply = str(old.get("reply", "") or "")
+    escalate = bool(old.get("escalate")) or reply == HOLDING_LINE
+    content = _decision("" if escalate else reply, escalate, old.get("tool"))
+    return {"role": "assistant", "content": content}
 
 
 if __name__ == "__main__":

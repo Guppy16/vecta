@@ -28,9 +28,7 @@ from vecta.server.speech import (
 from vecta.server.talker import (
     HISTORY_KEEP,
     HISTORY_MAX,
-    HOWTO_HINTS,
     INSTRUCTION_HINTS,
-    LOOK_HINTS,
     ReplyExtractor,
     Talker,
     parse_reply,
@@ -108,16 +106,22 @@ def test_earcon_is_short_valid_pcm() -> None:
 
 
 def test_talker_history_and_parse() -> None:
-    assert parse_reply('{"reply": "Yes.", "escalate": false}') == ("Yes.", False, None)
-    assert parse_reply('```json\n{"reply": "", "escalate": true}\n```') == ("", True, None)
-    assert parse_reply('{"tool": "look"}') == ("", False, "look")
+    assert parse_reply('{"action": "answer", "reply": "Yes."}') == ("Yes.", False, None)
+    assert parse_reply('```json\n{"action": "expert"}\n```') == ("", True, None)
+    assert parse_reply('{"action": "look"}') == ("", False, "look")
+    assert parse_reply('{"action": "silent"}') == ("", False, None)
     assert parse_reply("plain text") == ("plain text", False, None)
     t = Talker()
     t.said("Hold it steady.")
+    t.said("", escalate=True)
+    assert [json.loads(h["content"]) for h in t.history] == [
+        {"action": "answer", "reply": "Hold it steady."},
+        {"action": "expert"},
+    ]
     system = t._system()
     t.brief("The thermostat is a Danfoss.")  # joins the dialogue; the system prompt is unchanged
     assert t._system() == system and "Danfoss" in t.history[-1]["content"]
-    for i in range(HISTORY_MAX - 2):
+    for i in range(HISTORY_MAX - 3):
         t.heard(f"u{i}")
     assert len(t.history) == HISTORY_MAX  # trimmed in one block, not message by message
     t.heard("one more")
@@ -140,17 +144,8 @@ def test_tts_track_paces_and_fills_silence() -> None:
     asyncio.run(main())
 
 
-def test_howto_and_look_hints() -> None:
-    assert HOWTO_HINTS.search("how do I set the temperature")
-    assert HOWTO_HINTS.search("what does this button do")
-    assert HOWTO_HINTS.search("can you explain it")
-    assert not HOWTO_HINTS.search("hello there")
-    assert LOOK_HINTS.search("do you see the thermostat now?")
-    assert not LOOK_HINTS.search("thanks")
-
-
 def test_reply_extractor_streams_reply_text():
-    raw = '{"reply": "It says \\"003\\", not a\\u00b0 temp.\\nOk", "escalate": false}'
+    raw = '{"action": "answer", "reply": "It says \\"003\\", not a\\u00b0 temp.\\nOk"}'
     x, out = ReplyExtractor(), []
     for i in range(0, len(raw), 3):  # deltas cut anywhere, including inside escapes
         out.append(x.feed(raw[i : i + 3]))
@@ -158,7 +153,7 @@ def test_reply_extractor_streams_reply_text():
     assert x.done and x.started
 
     tool = ReplyExtractor()
-    assert tool.feed('{"tool": "look"}') == "" and not tool.started
+    assert tool.feed('{"action": "look"}') == "" and not tool.started
 
 
 def test_phrase_splitter():
@@ -200,15 +195,6 @@ class _LoudVad:
         return any(chunk)
 
 
-class _FakeStt:
-    def __init__(self) -> None:
-        self.calls = 0
-
-    async def transcribe(self, pcm: bytes) -> str:
-        self.calls += 1
-        return f"utterance of {len(pcm)} bytes"
-
-
 def _frames(ms: int, loud: bool) -> bytes:
     return (b"\x01\x00" if loud else b"\x00\x00") * (FRAME_BYTES // 2) * (ms // FRAME_MS)
 
@@ -216,18 +202,18 @@ def _frames(ms: int, loud: bool) -> bytes:
 async def _feed(listener: Listener, pcm: bytes) -> None:
     listener._pending += pcm
     await listener._drain()
-    await asyncio.sleep(0.01)  # let transcription tasks run
+    await asyncio.sleep(0.01)  # let the speech tasks run
 
 
 def test_listener_speculates_at_a_pause_and_commits_at_the_end():
     async def run() -> None:
-        got: list[tuple[str, asyncio.Event]] = []
+        got: list[tuple[bytes, asyncio.Event]] = []
 
-        def on_text(text, started, ended, committed):
-            got.append((text, committed))
+        def on_speech(pcm, started, ended, committed):
+            got.append((pcm, committed))
             return asyncio.create_task(committed.wait())
 
-        listener = Listener(_FakeStt(), on_text)
+        listener = Listener(on_speech)
         listener._vad = _LoudVad()
         await _feed(listener, _frames(600, True) + _frames(240, False))
         assert len(got) == 1 and not got[0][1].is_set()  # reply prepared, not yet heard
@@ -240,19 +226,19 @@ def test_listener_speculates_at_a_pause_and_commits_at_the_end():
 def test_listener_cancels_speculation_when_the_user_carries_on():
     async def run() -> None:
         replies: list[asyncio.Task] = []
-        texts: list[str] = []
+        heard: list[bytes] = []
 
-        def on_text(text, started, ended, committed):
-            texts.append(text)
+        def on_speech(pcm, started, ended, committed):
+            heard.append(pcm)
             replies.append(asyncio.create_task(committed.wait()))
             return replies[-1]
 
-        listener = Listener(_FakeStt(), on_text)
+        listener = Listener(on_speech)
         listener._vad = _LoudVad()
         await _feed(listener, _frames(600, True) + _frames(240, False))
         await _feed(listener, _frames(600, True) + _frames(390, False))
         assert replies[0].cancelled()
-        assert len(texts) == 2 and texts[1] != texts[0]  # the second covers the whole utterance
+        assert len(heard) == 2 and len(heard[1]) > len(heard[0])  # the whole utterance
         await asyncio.sleep(0)
         assert replies[1].done() and not replies[1].cancelled()
 
@@ -313,20 +299,20 @@ def test_prune_keeps_only_labelled_recordings(tmp_path: Path):
 
 def test_barge_in_stops_us_but_our_echo_does_not():
     async def run() -> None:
-        texts: list[str] = []
+        heard: list[bytes] = []
         barged: list[bool] = []
 
-        def on_text(text, started, ended, committed):
-            texts.append(text)
+        def on_speech(pcm, started, ended, committed):
+            heard.append(pcm)
             return None
 
-        listener = Listener(_FakeStt(), on_text, on_barge_in=lambda: barged.append(True))
+        listener = Listener(on_speech, on_barge_in=lambda: barged.append(True))
         listener._vad = _LoudVad()
         await listener.mute_for(5)  # we are talking
         await _feed(listener, _frames(300, True) + _frames(390, False))  # a short echo blip
-        assert not barged and texts == []
+        assert not barged and heard == []
         await _feed(listener, _frames(600, True) + _frames(390, False))  # the user cuts in
-        assert barged == [True] and len(texts) == 1
+        assert barged == [True] and len(heard) == 1
 
     asyncio.run(run())
 
@@ -346,9 +332,8 @@ def test_asks_closer_detects_a_request_for_a_close_up():
     assert not ASKS_CLOSER.search("Now I can see it: the label says GA-52T.")
 
 
-def test_instruction_guard_swallows_the_holding_line_and_streams_the_rest():
+def test_instruction_guard_streams_until_the_reply_turns_into_steps():
     from vecta.server.app import _InstructionGuard
-    from vecta.server.talker import HOLDING_LINE
 
     class Voice:
         def __init__(self) -> None:
@@ -357,14 +342,13 @@ def test_instruction_guard_swallows_the_holding_line_and_streams_the_rest():
         def write(self, t: str) -> None:
             self.text += t
 
-    v = Voice()
-    g = _InstructionGuard(v)
-    for i in range(0, len(HOLDING_LINE), 4):
-        g(HOLDING_LINE[i : i + 4])
-    assert g.holding and v.text == ""
-
     v, reply = Voice(), "Let me check the label for you."
     g = _InstructionGuard(v)
     for i in range(0, len(reply), 3):
         g(reply[i : i + 3])
-    assert not g.holding and v.text == reply  # shared start with the holding line is fine
+    assert not g.tripped and v.text == reply
+
+    v = Voice()
+    g = _InstructionGuard(v)
+    g("Sure. First press PROG, then hold it.")
+    assert g.tripped and v.text == ""

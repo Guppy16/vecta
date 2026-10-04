@@ -1,30 +1,25 @@
-"""Always-on listening: mic track -> VAD segments -> Whisper -> the reply logic.
+"""Always-on listening: mic track -> VAD segments -> the talker, which hears the audio.
 
 The phone streams its microphone as a WebRTC audio track. We resample to
-16 kHz mono, cut it into utterances with a simple VAD and transcribe each one
-with Lemonade's Whisper endpoint. Deciding whether an utterance deserves a
-response is the agent's job, not ours — noise and half-sentences get through too.
+16 kHz mono and cut it into utterances with a simple VAD. Deciding whether an
+utterance deserves a response is the talker's job, not ours — noise and
+half-sentences get through too.
 
-Whisper doesn't stream, so to save the end-of-utterance wait we speculate: at a
-short pause the utterance is transcribed and handed on with a `committed` event
-that is not set yet, so the reply can be prepared; the event is set once the
-pause is long enough to be the end, and the reply is cancelled if the user
-carries on talking.
+To save the end-of-utterance wait we speculate: at a short pause the utterance is
+handed on with a `committed` event that is not set yet, so the reply can be
+prepared; the event is set once the pause is long enough to be the end, and the
+reply is cancelled if the user carries on talking.
 """
 
 import asyncio
-import io
 import json
 import logging
-import os
-import re
 import time
 import wave
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-import httpx
 import webrtcvad
 from aiortc.mediastreams import MediaStreamError, MediaStreamTrack
 from av import AudioResampler
@@ -39,33 +34,6 @@ END_SILENCE_MS = 350  # end of utterance; shorter = snappier, risks splitting sl
 SPECULATE_SILENCE_MS = 200  # start transcribing and replying here; heard only at END_SILENCE_MS
 BARGE_IN_MS = 400  # this much unbroken speech while we are talking = the user interrupting us
 MAX_UTTERANCE_MS = 15000
-# Whisper's non-speech tokens: [BLANK_AUDIO], [typing], (music), or just punctuation.
-NON_SPEECH = re.compile(r"^\s*(\[[^\]]*\]|\([^)]*\)|[\s.\-]+)\s*$")
-
-
-class Transcriber:
-    def __init__(
-        self,
-        base_url: str = os.environ.get("VECTA_LLM_BASE_URL", "http://127.0.0.1:13305/api/v1"),
-        model: str = os.environ.get("VECTA_STT_MODEL", "Whisper-Base"),
-    ) -> None:
-        self._client = httpx.AsyncClient(base_url=base_url, timeout=60)
-        self.model = model
-
-    async def transcribe(self, pcm16: bytes) -> str:
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(RATE)
-            w.writeframes(pcm16)
-        r = await self._client.post(
-            "/audio/transcriptions",
-            data={"model": self.model},
-            files={"file": ("u.wav", buf.getvalue(), "audio/wav")},
-        )
-        r.raise_for_status()
-        return r.json().get("text", "").strip()
 
 
 class Recorder:
@@ -97,15 +65,16 @@ class Recorder:
             f.write(line + "\n")
 
 
-# text, started_at, ended_at (epoch s), committed -> the task that handles it (cancellable)
-OnText = Callable[[str, float, float, asyncio.Event], asyncio.Task | None]
+# PCM16 audio, started_at, ended_at (epoch s), committed -> the task that handles it
+# (cancellable); its result is the transcript, for the recording
+OnSpeech = Callable[[bytes, float, float, asyncio.Event], asyncio.Task[str] | None]
 
 
 @dataclass
 class _Speculation:
     committed: asyncio.Event
-    task: asyncio.Task | None = None  # transcribe, then hand the text to on_text
-    reply: asyncio.Task | None = None  # what on_text started
+    task: asyncio.Task | None = None  # hands the audio to on_speech, notes the transcript
+    reply: asyncio.Task | None = None  # what on_speech started
     text: str | None = None  # the transcript, once known
     rec: str | None = None  # recording id, once the utterance has ended
 
@@ -116,7 +85,7 @@ class _Speculation:
 
 
 class Listener:
-    """Consumes one audio track; calls `on_text(text, started_at, ended_at, committed)` per
+    """Consumes one audio track; calls `on_speech(pcm16, started_at, ended_at, committed)` per
     utterance, possibly before it has ended (see the module docstring).
 
     While the agent is speaking (`mute_for`), utterances that start are assumed to be our own
@@ -127,14 +96,12 @@ class Listener:
 
     def __init__(
         self,
-        transcriber: Transcriber,
-        on_text: OnText,
+        on_speech: OnSpeech,
         recorder: Recorder | None = None,
         on_barge_in: Callable[[], None] | None = None,
         aggressiveness: int = 2,
     ) -> None:
-        self._stt = transcriber
-        self._on_text = on_text
+        self._on_speech = on_speech
         self._rec = recorder
         self._on_barge_in = on_barge_in
         self.muted_until = 0.0  # epoch s: we are talking until then
@@ -246,13 +213,14 @@ class Listener:
         return spec
 
     async def _deliver(self, spec: _Speculation, pcm: bytes, started: float, ended: float) -> None:
+        spec.reply = self._on_speech(pcm, started, ended, spec.committed)
+        if spec.reply is None:
+            return
         try:
-            text = await self._stt.transcribe(pcm)
+            text = await spec.reply
         except Exception as e:
-            log.warning("stt failed: %s", e)
+            log.warning("handling speech failed: %s", e)
             return
         spec.text = text
         if spec.rec and self._rec:
             self._rec.note(spec.rec, text=text)
-        if text and not NON_SPEECH.match(text):
-            spec.reply = self._on_text(text, started, ended, spec.committed)
