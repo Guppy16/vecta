@@ -35,7 +35,6 @@ from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, SpeechStream, earcon
 from vecta.server.talker import (
     HOLDING_LINE,
-    HOWTO_HINTS,
     INSTRUCTION_HINTS,
     LOOK_HINTS,
     Reply,
@@ -229,13 +228,9 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
     voice = SpeechStream(tts, sink, lv.voices)
     guard = _InstructionGuard(voice)
     try:
-        if HOWTO_HINTS.search(text):
-            # how-to questions belong to the main agent; don't let the talker improvise one
-            lv.talker.heard(text)
-            lv.talker.said(HOLDING_LINE, escalate=True)
-            reply = Reply(HOLDING_LINE, True, 0)
-            voice.write(HOLDING_LINE)
-        elif LOOK_HINTS.search(text):
+        # (no up-front how-to keyword check: the prompt now decides better, see talker_eval.py;
+        # the instruction guard below still stops improvised steps)
+        if LOOK_HINTS.search(text):
             # obviously about the camera: skip the round trip where the talker asks to look
             lv.talker.heard(text)
             lv.talker.asked("look")
