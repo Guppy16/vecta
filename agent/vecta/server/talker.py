@@ -3,11 +3,13 @@
 Nemotron 3 Nano Omni hears each utterance as audio and decides in one short JSON
 object: stay silent, look through the camera, hand over to the main agent (the
 expert, who reads the same inbox and replies through `vecta say`), or answer in a
-sentence. A second request with the same prompt and history transcribes the audio in
-parallel; the transcript replaces the audio in the history and goes to the inbox.
+sentence. A second request transcribes the same audio in parallel; the transcript
+replaces the audio in the history and goes to the inbox. It is a plain transcription
+request: given the talker's prompt and history, Nemotron answered the audio or called
+clear speech "[no audio]" instead of writing it down.
 
 The server (llama.cpp, see scripts/nemotron_server.sh) runs two slots, one for each
-request, so each keeps its own cached copy of the shared prefix.
+request, so transcripts don't evict the cached conversation.
 """
 
 import asyncio
@@ -77,13 +79,14 @@ PERSONA = (
     "If unsure between expert and answer, choose expert.\n"
 ).strip()
 TRANSCRIBE = (
-    "[transcribe] Write down exactly what was said in the last audio message, nothing else. "
-    "If there is no speech, write [no audio]."
+    "Transcribe the speech in this audio exactly as spoken. Output only the transcript, "
+    "nothing else. If there is no speech, output [no audio]."
 )
-# Keeps the reply to the action-first format: only "answer" carries words.
+# Keeps the reply to the action-first format: only "answer" carries words. With a camera
+# frame already attached, looking again is not an option (Nemotron otherwise asks to look).
 GRAMMAR = r"""
 root ::= "{\"action\": \"" (other | answer)
-other ::= ("look" | "expert" | "silent") "\"}"
+other ::= ({actions}) "\"}"
 answer ::= "answer\", \"reply\": \"" str "\"}"
 str ::= ([^"\\\x00-\x1f] | "\\" ["\\/bfnrt])*
 """
@@ -148,8 +151,8 @@ class Talker:
         audio = {"data": base64.b64encode(_wav(pcm16)).decode(), "format": "wav"}
         self._push("user", [{"type": "input_audio", "input_audio": audio}])
         msg = self.history[-1]
-        messages = [*self._messages(), {"role": "user", "content": TRANSCRIBE}]
-        return asyncio.create_task(self._transcribe(msg, messages))
+        request = [*msg["content"], {"type": "text", "text": TRANSCRIBE}]
+        return asyncio.create_task(self._transcribe(msg, [{"role": "user", "content": request}]))
 
     def said(self, text: str, escalate: bool = False) -> None:
         """Something said to the user on the talker's behalf (the main agent), or a hand-over
@@ -169,7 +172,7 @@ class Talker:
     async def tool_result(self, tool: str, result: str, on_text: OnText | None = None) -> Reply:
         """Feed a tool's output back and let the talker answer with it."""
         self._push("user", f"[tool {tool} result] {result}")
-        return await self._complete(on_text)
+        return await self._complete(on_text, look=False)
 
     async def look_result(self, jpeg: bytes, on_text: OnText | None = None) -> Reply:
         """Answer the pending question from a camera frame. The frame goes to the model with
@@ -190,7 +193,7 @@ class Talker:
         messages = [*self._messages(), {"role": "user", "content": _with_image(prompt, jpeg)}]
         # the transcribe slot: the decide slot keeps the conversation cached for the next turn
         resp = await self._client.chat.completions.create(
-            **self._request(messages, 60), extra_body=_extra(TRANSCRIBE_SLOT)
+            **self._request(messages, 60), extra_body=_extra(TRANSCRIBE_SLOT, _grammar(look=False))
         )
         reply, _, _ = parse_reply(resp.choices[0].message.content or "")
         return "" if ASKS_CLOSER.search(reply) else reply
@@ -198,13 +201,15 @@ class Talker:
     async def _transcribe(self, msg: dict, messages: list[dict]) -> str:
         resp = await self._client.chat.completions.create(
             **self._request(messages, 120),
-            extra_body=_extra(TRANSCRIBE_SLOT, grammar=False),
+            extra_body=_extra(TRANSCRIBE_SLOT),
         )
-        text = (resp.choices[0].message.content or "").strip()
+        text = (resp.choices[0].message.content or "").replace("<think></think>", "").strip()
         msg["content"] = text or "[no audio]"
         return "" if NON_SPEECH.match(text) else text
 
-    async def _complete(self, on_text: OnText | None, image: bytes | None = None) -> Reply:
+    async def _complete(
+        self, on_text: OnText | None, image: bytes | None = None, look: bool = True
+    ) -> Reply:
         """Streams the completion; `on_text` gets the spoken reply as it is written, so speech
         can start long before the JSON is finished."""
         t0 = time.monotonic()
@@ -213,7 +218,9 @@ class Talker:
             last = messages[-1]
             messages[-1] = {"role": last["role"], "content": _with_image(last["content"], image)}
         stream = await self._client.chat.completions.create(
-            **self._request(messages, 80), extra_body=_extra(DECIDE_SLOT), stream=True
+            **self._request(messages, 80),
+            extra_body=_extra(DECIDE_SLOT, _grammar(look=look and image is None)),
+            stream=True,
         )
         raw, first_ms, timings = "", None, {}
         extractor = ReplyExtractor()
@@ -260,17 +267,22 @@ class Talker:
             self._system_briefing = self.briefing  # the prefix changes here anyway
 
 
-def _extra(slot: int, grammar: bool = True) -> dict:
+def _extra(slot: int, grammar: str | None = None) -> dict:
     """llama-server fields: its own slot per request kind, the cached prefix reused, thinking
-    off (it is slower and scored worse), and the action-first grammar for decisions."""
+    off (it is slower and scored worse), and the grammar for decisions."""
     body = {
         "id_slot": slot,
         "cache_prompt": True,
         "chat_template_kwargs": {"enable_thinking": False},
     }
     if grammar:
-        body["grammar"] = GRAMMAR
+        body["grammar"] = grammar
     return body
+
+
+def _grammar(look: bool) -> str:
+    actions = ("look", "expert", "silent") if look else ("expert", "silent")
+    return GRAMMAR.replace("{actions}", " | ".join(f'"{a}"' for a in actions))
 
 
 def _with_image(text: str, jpeg: bytes) -> list[dict]:
