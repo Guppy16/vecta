@@ -122,8 +122,8 @@ def main(interval: float, dry_run: bool) -> None:
             if worse or now - last_warn > 900:
                 log(f"WARN {status}", alert=True)
                 last_warn, warned_share, warned_avail = now, share, avail
-        else:
-            warned_share, warned_avail = 0.0, float("inf")
+        elif avail > WARN_AVAIL + 5 * GIB and share < WARN_GTT - 0.05:
+            warned_share, warned_avail = 0.0, float("inf")  # clearly back to normal
         if now - last_status > 60:
             log(status)
             last_status = now
