@@ -96,6 +96,7 @@ def log(line: str, alert: bool = False) -> None:
 
 def main(interval: float, dry_run: bool) -> None:
     last_status = last_warn = 0.0
+    warned_share, warned_avail = 0.0, float("inf")  # levels at the last warning
     while True:
         avail = mem_available()
         used, total = gtt()
@@ -116,9 +117,13 @@ def main(interval: float, dry_run: bool) -> None:
                 log(f"DANGER {status}: no experiment process to stop", alert=True)
                 last_warn = now
         elif avail < WARN_AVAIL or share > WARN_GTT:
-            if now - last_warn > 60:
+            # warn when it gets worse (or every 15 min while it stays high), not every minute
+            worse = share > warned_share + 0.05 or avail < warned_avail - 5 * GIB
+            if worse or now - last_warn > 900:
                 log(f"WARN {status}", alert=True)
-                last_warn = now
+                last_warn, warned_share, warned_avail = now, share, avail
+        else:
+            warned_share, warned_avail = 0.0, float("inf")
         if now - last_status > 60:
             log(status)
             last_status = now
