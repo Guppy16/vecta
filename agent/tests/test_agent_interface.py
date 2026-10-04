@@ -336,3 +336,35 @@ def test_instruction_hints_catch_improvised_steps():
     assert INSTRUCTION_HINTS.search("Hold both arrows for three seconds.")
     assert not INSTRUCTION_HINTS.search("Yes, I can hear you. The display shows 22.5.")
     assert not INSTRUCTION_HINTS.search("I see a white plug with a black cable.")
+
+
+def test_asks_closer_detects_a_request_for_a_close_up():
+    from vecta.server.talker import ASKS_CLOSER
+
+    assert ASKS_CLOSER.search("The brand isn't visible. Can you bring it closer?")
+    assert ASKS_CLOSER.search("I can't read the label from here.")
+    assert not ASKS_CLOSER.search("Now I can see it: the label says GA-52T.")
+
+
+def test_instruction_guard_swallows_the_holding_line_and_streams_the_rest():
+    from vecta.server.app import _InstructionGuard
+    from vecta.server.talker import HOLDING_LINE
+
+    class Voice:
+        def __init__(self) -> None:
+            self.text = ""
+
+        def write(self, t: str) -> None:
+            self.text += t
+
+    v = Voice()
+    g = _InstructionGuard(v)
+    for i in range(0, len(HOLDING_LINE), 4):
+        g(HOLDING_LINE[i : i + 4])
+    assert g.holding and v.text == ""
+
+    v, reply = Voice(), "Let me check the label for you."
+    g = _InstructionGuard(v)
+    for i in range(0, len(reply), 3):
+        g(reply[i : i + 3])
+    assert not g.holding and v.text == reply  # shared start with the holding line is fine

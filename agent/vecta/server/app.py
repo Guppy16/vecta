@@ -34,6 +34,7 @@ from vecta.server.rtc import Peer
 from vecta.server.sessions import Session, SessionStore
 from vecta.server.speech import Speaker, SpeechStream, earcon
 from vecta.server.talker import (
+    ASKS_CLOSER,
     HOLDING_LINE,
     INSTRUCTION_HINTS,
     LOOK_HINTS,
@@ -99,6 +100,7 @@ class Live:
     listener: Listener | None = None
     talker: Talker = field(default_factory=Talker)
     voices: set[SpeechStream] = field(default_factory=set)  # speech in progress, for barge-in
+    follow_up: asyncio.Task | None = None  # still looking after asking to bring it closer
 
 
 live: dict[str, Live] = {}
@@ -194,6 +196,8 @@ async def _on_voice(
     and cancel this task)."""
     lv = live.get(session.id)
     talk = None
+    if lv and lv.follow_up:
+        lv.follow_up.cancel()  # they are talking again: stop waiting for the close-up
     if settings.talker and lv:
         talk = asyncio.create_task(_talk(lv, text, ended, committed))
     try:
@@ -241,9 +245,10 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
                 reply = await _look_and_answer(lv, text, guard, committed)
         if guard.tripped:  # it started explaining how to operate something: that's ours
             voice.drop_unsaid()
-            voice.write(" " + HOLDING_LINE)
-            reply = Reply(f"{guard.said} {HOLDING_LINE}".strip(), True, reply.latency_ms)
+            reply = Reply(guard.said.strip(), True, reply.latency_ms)
             lv.talker.said(HOLDING_LINE, escalate=True)
+        elif guard.holding:  # the hand-over line: nothing to show or say, the chime plays
+            reply = Reply("", True, reply.latency_ms)
         await committed.wait()
     except asyncio.CancelledError:
         voice.cancel()
@@ -256,6 +261,8 @@ async def _talk(lv: Live, text: str, ended_at: float, committed: asyncio.Event) 
     if reply.escalate:
         s.inbox.append("escalate", text=text, context=lv.talker.history[-6:])
         lv.peer.send(m.Status(phase="thinking"))
+        if not reply.text or guard.holding:  # handed over: a short chime says "working on it"
+            lv.peer.voice.enqueue(base64.b64decode(earcon("thinking").data))
     if reply.text:
         lv.peer.send(m.AgentMessage(text=reply.text, status="answer", latency_ms=reply.latency_ms))
     await voice.finish()
@@ -280,16 +287,23 @@ class _InstructionGuard:
         self._text = ""
         self.said = ""  # the part let through before it tripped
         self.tripped = False
+        self.holding = False
 
     def __call__(self, delta: str) -> None:
-        if self.tripped:
+        if self.tripped or self.holding:
             return
         self._text += delta
+        start = self._text.lstrip()
+        if start.startswith(HOLDING_LINE[:24]):
+            self.holding = True  # the hand-over line is never spoken; a chime plays instead
+            return
+        if HOLDING_LINE.startswith(start):
+            return  # might be the hand-over line: wait until it can be told apart
         if INSTRUCTION_HINTS.search(self._text):
             self.tripped = True
             return
+        self._voice.write(self._text[len(self.said) :])
         self.said = self._text
-        self._voice.write(delta)
 
 
 async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Event) -> Reply:
@@ -313,7 +327,39 @@ async def _look_and_answer(lv: Live, text: str, on_text, committed: asyncio.Even
     seen = looks / f"look_{int(time.time() * 1000)}.jpg"
     seen.write_bytes(jpeg)
     s.inbox.append("verify", question=text, answer=reply.text, frame=str(seen))
+    if reply.text and ASKS_CLOSER.search(reply.text):
+        lv.follow_up = asyncio.create_task(_follow_up(lv, text))
     return reply
+
+
+FOLLOW_UP_EVERY_S, FOLLOW_UP_FOR_S = 1.5, 12.0
+
+
+async def _follow_up(lv: Live, question: str) -> None:
+    """The talker asked the user to bring something closer: keep looking for a while and say
+    the answer as soon as it can tell, without being asked again. Cancelled when the user
+    speaks (see _on_voice)."""
+    s = lv.peer.session
+    deadline = time.monotonic() + FOLLOW_UP_FOR_S
+    while time.monotonic() < deadline:
+        await asyncio.sleep(FOLLOW_UP_EVERY_S)
+        frame = s.frames.latest()
+        if frame is None:
+            continue
+        jpeg = await asyncio.to_thread(_jpeg_small, frame)
+        try:
+            answer = await lv.talker.recheck(question, jpeg)
+        except Exception as e:
+            log.warning("follow-up look failed: %s", e)
+            return
+        if answer:
+            lv.talker.said(answer)
+            seen = s.dir / "looks" / f"look_{int(time.time() * 1000)}.jpg"
+            seen.write_bytes(jpeg)
+            s.inbox.append("verify", question=question, answer=answer, frame=str(seen))
+            s.inbox.append("agent", text=answer, by="talker", follow_up=True)
+            await _speak(lv, answer)
+            return
 
 
 def _since(epoch_s: float | None, mono_s: float | None) -> int | None:

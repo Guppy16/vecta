@@ -64,8 +64,8 @@ PERSONA = (
     "yourself are ones the BRIEFING explicitly gives you to relay.\n"
     "\n"
     '4. Feedback about how you or the app behave, or requests to change it ("be quicker", '
-    '"don\'t say that"): you cannot change anything and must not promise to; pass it on '
-    'silently: {"reply": "", "escalate": true}\n'
+    '"don\'t say that"): you cannot change anything and must not promise to; pass it on: '
+    '{"reply": "Let me work that out properly, one moment.", "escalate": true}\n'
     "\n"
     '5. Otherwise (greetings, "can you hear me" checks, simple small talk, and simple facts '
     'or arithmetic you can answer with certainty, e.g. "what\'s 7 times 8"): {"reply": "<one '
@@ -80,7 +80,16 @@ HOWTO_HINTS = re.compile(
     r"explain|instructions?|steps?)\b",
     re.I,
 )
+# The model's hand-over line. The server never speaks it (a chime plays instead) but the
+# model keeps writing it: an empty reply with escalate=true was too easily confused with
+# staying silent.
 HOLDING_LINE = "Let me work that out properly, one moment."
+# a camera answer that asks the user to bring the thing closer: the server then keeps looking
+ASKS_CLOSER = re.compile(
+    r"\b(closer|clearer (view|look|picture)|can'?t (quite )?(read|see|make out)|"
+    r"not (visible|readable|legible))\b",
+    re.I,
+)
 # backstop on the talker's own words: it tends to improvise steps when asked to read a guide
 INSTRUCTION_HINTS = re.compile(
     r"\b(press|hold (down|it|both)|push|tap the|turn the|switch (it|the)|"
@@ -132,9 +141,8 @@ class Talker:
         self._push("user", text)
 
     def said(self, text: str, escalate: bool = False) -> None:
-        """Something said to the user on the talker's behalf (the main agent, or the server's
-        holding line, which must be logged as escalate=true or the model learns to say the
-        holding line without escalating)."""
+        """Something said to the user on the talker's behalf (the main agent), or a silent
+        hand-over (text "", escalate=True) the server made for the talker."""
         self._push("assistant", json.dumps({"reply": text, "escalate": escalate}))
 
     def asked(self, tool: str) -> None:
@@ -156,6 +164,38 @@ class Talker:
         and the cached prefix stays valid."""
         self._push("user", "[tool look result] camera frame attached")
         return await self._complete(on_text, image=jpeg)
+
+    async def recheck(self, question: str, jpeg: bytes) -> str:
+        """After asking the user to bring something closer: try the question again on a new
+        frame. Returns the answer, or "" while it still can't tell. Nothing is added to the
+        history (the caller records a positive answer with `said`)."""
+        prompt = (
+            f"[follow-up look] You asked the user to bring it closer. Question: {question} "
+            "A new camera frame is attached. If you can now answer it with certainty, answer "
+            'in one short sentence starting with "Now I can see it:"; otherwise reply "".'
+        )
+        url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()
+        messages = [
+            {"role": "system", "content": self._system()},
+            *self.history,
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": url}},
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        ]
+        resp = await self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=60,
+            response_format={"type": "json_object"},
+            extra_body={"cache_prompt": True, "chat_template_kwargs": {"enable_thinking": False}},
+        )
+        reply, _, _ = parse_reply(resp.choices[0].message.content or "")
+        return "" if ASKS_CLOSER.search(reply) else reply
 
     async def _complete(self, on_text: OnText | None, image: bytes | None = None) -> Reply:
         """Streams the completion; `on_text` gets the spoken reply as it is written, so speech
