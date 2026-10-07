@@ -200,9 +200,13 @@
     const says = Object.values(f.answers).map((a) => a.yes);
     return says.some((y) => y !== f.judged) || new Set(says).size > 1;
   };
+  // what to look at: the contested frames, and every frame the judge said yes to (a monitor the
+  // judge and the models all took for a TV is not contested, but still wrong)
+  const worthALook = (f) => contested(f) || f.judged;
   const GROUPS = {
-    review: { name: "To review", test: (f) => contested(f) && !state.labels[f.key] },
+    review: { name: "To review", test: (f) => worthALook(f) && !state.labels[f.key] },
     contested: { name: "Contested", test: contested },
+    judgedYes: { name: "Judge: yes", test: (f) => f.judged },
     labelled: { name: "Labelled", test: (f) => !!state.labels[f.key] },
     all: { name: "All", test: () => true },
   };
