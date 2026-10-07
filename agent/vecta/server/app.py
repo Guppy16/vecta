@@ -25,7 +25,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from vecta.protocol import messages as m
-from vecta.server import labels
+from vecta.server import frame_labels, labels
 from vecta.server.audio import Listener, Recorder
 from vecta.server.frames import Frame
 from vecta.server.ground import MarkerSpec, MarkerTracker
@@ -76,6 +76,7 @@ async def _prune_recordings() -> None:
 
 app = FastAPI(title="vecta", lifespan=lifespan)
 app.include_router(labels.router(settings.data_dir))
+app.include_router(frame_labels.router(settings.data_dir))
 store = SessionStore(settings.data_dir)
 vlm = Vlm()
 tts = Speaker()

@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vecta Frame Labels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Same palette and type as label.html (the voice labeller). */
+  :root {
+    --ground: #0D1311; --surface: #141C19; --sunken: #101714; --ink: #E3ECE8; --muted: #8E9E98;
+    --line: #25302C; --accent: #37C29F; --accent-ink: #06231B; --accent-soft: #13352B;
+    --warn: #F0B45C; --warn-soft: #3A2A10; --danger: #F2877E; --danger-soft: #3A1714;
+    --focus: #37C29F;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --cond: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --ground: #EEF1F0; --surface: #FFFFFF; --sunken: #F5F7F6; --ink: #14201C; --muted: #5B6964;
+    --line: #D5DDDA; --accent: #0B7A62; --accent-ink: #FFFFFF; --accent-soft: #D9F0E8;
+    --warn: #8F5400; --warn-soft: #FBEBD1; --danger: #A8261C; --danger-soft: #F8E0DD;
+    --focus: #0B7A62;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--ground); color: var(--ink); font-family: var(--sans);
+         font-size: 14px; line-height: 1.5; padding: 20px 16px 40px; }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  .mono { font-family: var(--mono); font-size: 0.92em; }
+  kbd { font-family: var(--mono); font-size: 11px; line-height: 1; border: 1px solid currentColor;
+        border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; opacity: .75; white-space: nowrap; }
+
+  .app { max-width: 1180px; margin-inline: auto; display: grid; gap: 16px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .tabs a { padding: 6px 14px; color: var(--muted); text-decoration: none; font-family: var(--cond);
+            font-weight: 600; font-size: 13px; letter-spacing: .04em; text-transform: uppercase;
+            border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--accent); }
+  .top { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 24px; }
+  .top h1 { font-family: var(--cond); font-weight: 600; font-size: 26px; line-height: 1.1; margin: 0; }
+  .top p { margin: 4px 0 0; color: var(--muted); max-width: 62ch; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stat { display: grid; padding: 6px 12px; background: var(--surface); border: 1px solid var(--line);
+          border-radius: 6px; min-width: 92px; }
+  .stat b { font-family: var(--mono); font-weight: 500; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stat span { font-family: var(--cond); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .banner { padding: 10px 14px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); }
+
+  .grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 780px) { .grid { grid-template-columns: minmax(0, 1fr); } .queue ol { max-height: 30vh; } }
+  .label { font-family: var(--cond); font-weight: 600; font-size: 11px; text-transform: uppercase;
+           letter-spacing: .08em; color: var(--muted); }
+
+  .queue { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+           position: sticky; top: 12px; }
+  .queue-head { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+                padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .filters button { border: 1px solid var(--line); background: none; color: var(--muted); border-radius: 999px;
+                    padding: 2px 10px; font-size: 12px; cursor: pointer; }
+  .filters button[aria-pressed="true"] { color: var(--ink); border-color: var(--accent); }
+  .queue ol { list-style: none; margin: 0; padding: 0; max-height: 64vh; overflow-y: auto; }
+  .item-btn { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 2px 10px;
+              align-items: center; padding: 8px 14px; background: none; border: 0;
+              border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+  .queue li:last-child .item-btn { border-bottom: 0; }
+  .item-btn:hover { background: var(--sunken); }
+  .item-btn[aria-current="true"] { background: var(--accent-soft); }
+  .item-btn .id { font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item-btn .votes { font-family: var(--mono); font-size: 12px; color: var(--muted); letter-spacing: .05em; }
+  .item-btn .sub { grid-column: 2 / 4; color: var(--muted); font-size: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--muted); }
+  .dot.done { background: var(--accent); border-color: var(--accent); }
+  .dot.unsure { background: var(--warn); border-color: var(--warn); }
+  .dot.fixed { background: var(--danger); border-color: var(--danger); }
+
+  .bench { display: grid; gap: 12px; min-width: 0; }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px;
+           display: grid; gap: 12px; min-width: 0; }
+  .item-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; }
+  .item-meta h2 { font-family: var(--mono); font-weight: 500; font-size: 16px; margin: 0; }
+  .item-meta .kv { color: var(--muted); font-size: 12.5px; }
+  .item-meta .kv .mono { color: var(--ink); }
+  .frame { display: grid; place-items: center; background: var(--sunken); border-radius: 6px; overflow: hidden; }
+  .frame img { display: block; max-width: 100%; max-height: 62vh; object-fit: contain; }
+  .question { font-size: 18px; font-weight: 500; margin: 0; }
+
+  .answers { display: grid; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .ans { display: grid; grid-template-columns: 160px 56px minmax(0, 1fr); gap: 12px; align-items: center;
+         padding: 7px 12px; border-bottom: 1px solid var(--line); }
+  .ans:last-child { border-bottom: 0; }
+  .ans .who { font-family: var(--mono); font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+  .ans .says { font-weight: 600; }
+  .ans .says.yes { color: var(--accent); }
+  .ans .says.no { color: var(--muted); }
+  .ans .says.off { text-decoration: underline wavy var(--danger); text-underline-offset: 4px; }
+  .margin { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .bar { position: relative; flex: 1; height: 6px; background: var(--sunken); border-radius: 3px; max-width: 260px; }
+  .bar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--line); }
+  .bar i { position: absolute; top: 0; bottom: 0; border-radius: 3px; background: var(--muted); }
+  .bar i.yes { background: var(--accent); }
+
+  .acts { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  @media (max-width: 640px) { .acts { grid-template-columns: 1fr 1fr; } }
+  .act { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 10px;
+         white-space: nowrap; font-size: 13.5px; border: 1px solid var(--line); border-radius: 8px;
+         background: var(--surface); cursor: pointer; font-weight: 500; text-align: left; }
+  .act:hover { border-color: var(--muted); }
+  .act.agree { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+  .act.no { color: var(--danger); }
+  .act.unsure { color: var(--warn); }
+  .act[aria-pressed="true"] { box-shadow: inset 0 0 0 2px currentColor; }
+  .note-row { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: center; }
+  input#note { width: 100%; padding: 7px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--sunken); }
+  input#note:focus { background: var(--surface); border-color: var(--accent); outline: none; }
+  .status { font-size: 13px; color: var(--muted); min-height: 20px; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--accent); }
+  .empty { padding: 32px 16px; text-align: center; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="tabs" aria-label="Labellers">
+    <a href="/label">Voice</a>
+    <a href="/label/frames" aria-current="page">Frames</a>
+  </nav>
+  <header class="top">
+    <div>
+      <h1>Vecta Frame Labels</h1>
+      <p>The camera frames the object-spotting benchmark is scored on. Their labels came from the live
+        judge, so some are wrong. Say whether the object is really in view; a desk monitor is not a TV.</p>
+    </div>
+    <div class="stats" id="stats" aria-live="polite"></div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <main class="grid">
+    <nav class="queue" aria-label="Frames">
+      <div class="queue-head"><span class="label" id="queue-count">Frames</span><span class="label"><kbd>↑</kbd> <kbd>↓</kbd> move</span></div>
+      <div class="filters" id="filters" role="group" aria-label="Show"></div>
+      <ol id="queue"></ol>
+    </nav>
+
+    <section class="bench" aria-live="polite">
+      <div class="panel empty" id="bench-empty">Nothing to label here.</div>
+
+      <div class="panel" id="bench-frame" hidden>
+        <div class="item-meta">
+          <h2 id="item-id"></h2>
+          <span class="kv">task <span class="mono" id="item-task"></span></span>
+        </div>
+        <div class="frame"><img id="frame" alt="Camera frame"></div>
+      </div>
+
+      <div class="panel" id="bench-form" hidden>
+        <p class="question" id="question"></p>
+        <div class="acts">
+          <button type="button" class="act agree" id="act-agree"><span id="agree-text">Agree</span> <kbd>Enter</kbd></button>
+          <button type="button" class="act" id="act-yes">It's there <kbd>Y</kbd></button>
+          <button type="button" class="act no" id="act-no">It isn't <kbd>N</kbd></button>
+          <button type="button" class="act no" id="act-monitor">Monitor, not TV <kbd>M</kbd></button>
+          <button type="button" class="act unsure" id="act-unsure">Unsure <kbd>U</kbd></button>
+        </div>
+        <div class="note-row">
+          <label class="label" for="note">Comment <kbd>C</kbd></label>
+          <input id="note" type="text" placeholder="for Claude, optional — Enter saves">
+        </div>
+        <div class="status" id="status"></div>
+      </div>
+
+      <div class="panel" id="bench-answers" hidden>
+        <span class="label">What each model answered (margin = how sure: yes &gt; 0 &gt; no)</span>
+        <div class="answers" id="answers"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const MODEL_NAMES = {
+    exact: "GPU, exact",
+    pool16: "GPU, pooled 16×16",
+    npu_bfp16: "NPU precision",
+  };
+  const state = { items: [], models: [], labels: {}, current: null, filter: "review" };
+  const itemOf = (key) => state.items.find((f) => f.key === key);
+
+  // the models disagree with the judge, or with each other
+  const contested = (f) => {
+    const says = Object.values(f.answers).map((a) => a.yes);
+    return says.some((y) => y !== f.judged) || new Set(says).size > 1;
+  };
+  const GROUPS = {
+    review: { name: "To review", test: (f) => contested(f) && !state.labels[f.key] },
+    contested: { name: "Contested", test: contested },
+    labelled: { name: "Labelled", test: (f) => !!state.labels[f.key] },
+    all: { name: "All", test: () => true },
+  };
+  const shown = () => state.items.filter(GROUPS[state.filter].test);
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") node.className = v;
+      else if (k === "text") node.textContent = v;
+      else if (v !== null && v !== undefined) node.setAttribute(k, v);
+    }
+    for (const c of [].concat(children)) if (c) node.append(c);
+    return node;
+  }
+
+  // what is true for this frame: your label if definite, else the judge's
+  function truth(f) {
+    const l = state.labels[f.key];
+    return l && l.present !== "unsure" ? l.present === "yes" : f.judged;
+  }
+  function statusOf(f) {
+    const l = state.labels[f.key];
+    if (!l) return "todo";
+    if (l.present === "unsure") return "unsure";
+    return (l.present === "yes") === f.judged ? "done" : "fixed";
+  }
+  const objName = (f) => (f.object === "tv" ? "TV" : f.object);
+
+  function renderStats() {
+    let labelled = 0, fixed = 0, review = 0;
+    for (const f of state.items) {
+      const s = statusOf(f);
+      if (s !== "todo") labelled++;
+      if (s === "fixed") fixed++;
+      if (GROUPS.review.test(f)) review++;
+    }
+    $("stats").replaceChildren(
+      ...[[review, "to review"], [labelled, "labelled"], [fixed, "judge was wrong"], [state.items.length, "frames"]]
+        .map(([n, what]) => el("div", { class: "stat" }, [el("b", { text: String(n) }), el("span", { text: what })])));
+  }
+
+  function renderFilters() {
+    $("filters").replaceChildren(...Object.entries(GROUPS).map(([key, g]) => {
+      const b = el("button", { type: "button", "aria-pressed": String(state.filter === key) },
+        `${g.name} ${state.items.filter(g.test).length}`);
+      b.addEventListener("click", () => { state.filter = key; render(); if (!shown().some((f) => f.key === state.current)) selectFirst(); });
+      return b;
+    }));
+  }
+
+  function renderQueue() {
+    const list = shown();
+    $("queue-count").textContent = `${list.length} frames`;
+    $("queue").replaceChildren(...list.map((f) => {
+      const votes = state.models.map((m) => (f.answers[m] ? (f.answers[m].yes ? "Y" : "n") : "·")).join(" ");
+      const b = el("button", { type: "button", class: "item-btn", "aria-current": String(f.key === state.current) }, [
+        el("span", { class: `dot ${statusOf(f)}` }),
+        el("span", { class: "id", text: f.key }),
+        el("span", { class: "votes", text: votes, title: state.models.map((m) => MODEL_NAMES[m] || m).join(", ") }),
+        el("span", { class: "sub", text: `${objName(f)}? judge: ${f.judged ? "yes" : "no"}` }),
+      ]);
+      b.addEventListener("click", () => select(f.key));
+      return el("li", {}, b);
+    }));
+    $("queue").querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+  }
+
+  function renderBench() {
+    const f = itemOf(state.current);
+    $("bench-empty").hidden = !!f;
+    for (const id of ["bench-frame", "bench-form", "bench-answers"]) $(id).hidden = !f;
+    if (!f) return;
+    $("item-id").textContent = f.key;
+    $("item-task").textContent = `"${f.task}"`;
+    const src = `/label/frames/img/${f.session}/${f.file}`;
+    if ($("frame").getAttribute("src") !== src) $("frame").src = src;
+    $("question").textContent = `Is there a ${objName(f)} in this frame?`;
+    $("agree-text").textContent = `Agree: ${f.judged ? "yes" : "no"}`;
+    $("act-monitor").hidden = f.object !== "tv";
+    const l = state.labels[f.key];
+    const pressed = l ? (l.present === "no" && /monitor/i.test(l.note || "") ? "monitor" : l.present) : null;
+    for (const [id, v] of [["act-yes", "yes"], ["act-no", "no"], ["act-monitor", "monitor"], ["act-unsure", "unsure"]])
+      $(id).setAttribute("aria-pressed", String(pressed === v));
+    if (document.activeElement !== $("note")) $("note").value = l ? l.note || "" : "";
+    const isTrue = truth(f);
+    $("answers").replaceChildren(...state.models.filter((m) => f.answers[m]).map((m) => {
+      const a = f.answers[m];
+      const w = Math.min(Math.abs(a.margin) / 5, 1) * 50;  // margin 5 fills half the bar
+      const bar = el("i", { class: a.yes ? "yes" : "", style: `left:${a.yes ? 50 : 50 - w}%;width:${w}%` });
+      return el("div", { class: "ans" }, [
+        el("span", { class: "who", text: MODEL_NAMES[m] || m }),
+        el("span", { class: `says ${a.yes ? "yes" : "no"}${a.yes !== isTrue ? " off" : ""}`, text: a.yes ? "yes" : "no" }),
+        el("span", { class: "margin" }, [el("span", { class: "bar" }, bar), el("span", { text: (a.margin > 0 ? "+" : "") + a.margin.toFixed(1) })]),
+      ]);
+    }));
+  }
+
+  function render() { renderStats(); renderFilters(); renderQueue(); renderBench(); }
+
+  function select(key) { state.current = key; setStatus(""); render(); }
+  function selectFirst() {
+    const list = shown();
+    state.current = (list.find((f) => !state.labels[f.key]) || list[0] || {}).key || null;
+    render();
+  }
+  function step(delta) {
+    const list = shown();
+    const i = list.findIndex((f) => f.key === state.current);
+    const next = list[Math.max(0, Math.min(list.length - 1, i + delta))];
+    if (next) select(next.key);
+  }
+  function nextTodo(fromKey) {
+    const list = shown();
+    const i = list.findIndex((f) => f.key === fromKey);
+    const after = [...list.slice(i + 1), ...list.slice(0, Math.max(i, 0))];
+    const next = after.find((f) => !state.labels[f.key]) || list[i + 1];
+    if (next) select(next.key); else render();
+  }
+
+  function setStatus(text, kind = "") {
+    $("status").textContent = text;
+    $("status").className = `status ${kind}`;
+  }
+
+  async function save(present, note) {
+    const f = itemOf(state.current);
+    if (!f) return;
+    const body = { key: f.key, present, note: note ?? $("note").value };
+    try {
+      const res = await fetch("/label/frames", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      state.labels[f.key] = await res.json();
+      setStatus(`Saved ${f.key}: ${present}`, "ok");
+      $("note").blur();
+      nextTodo(f.key);
+    } catch (err) {
+      setStatus(`Not saved: ${err.message}`, "err");
+    }
+  }
+  const agree = () => { const f = itemOf(state.current); if (f) save(f.judged ? "yes" : "no"); };
+  const monitor = () => { const f = itemOf(state.current); if (f && f.object === "tv") save("no", $("note").value || "monitor, not a TV"); };
+  function saveNote() {
+    const f = itemOf(state.current);
+    const l = f && state.labels[f.key];
+    save(l ? l.present : "unsure");
+  }
+
+  $("act-agree").addEventListener("click", agree);
+  $("act-yes").addEventListener("click", () => save("yes"));
+  $("act-no").addEventListener("click", () => save("no"));
+  $("act-monitor").addEventListener("click", monitor);
+  $("act-unsure").addEventListener("click", () => save("unsure"));
+
+  document.addEventListener("keydown", (e) => {
+    if (e.target.id === "note") {
+      if (e.key === "Enter") { e.preventDefault(); saveNote(); }
+      else if (e.key === "Escape") { e.preventDefault(); $("note").blur(); }
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey || !state.current) return;
+    const act = {
+      "Enter": agree,
+      "y": () => save("yes"),
+      "n": () => save("no"),
+      "m": monitor,
+      "u": () => save("unsure"),
+      "c": () => $("note").focus(),
+      "ArrowDown": () => step(1),
+      "ArrowUp": () => step(-1),
+      "j": () => step(1),
+      "k": () => step(-1),
+    }[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+    if (!act) return;
+    e.preventDefault();
+    act();
+  });
+
+  async function load() {
+    try {
+      const res = await fetch("/label/frames/items");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      Object.assign(state, { items: data.items, models: data.models, labels: data.labels });
+      $("banner").hidden = true;
+      selectFirst();
+    } catch (err) {
+      $("banner").textContent = `Could not load frames: ${err.message}`;
+      $("banner").hidden = false;
+    }
+  }
+  load();
+})();
+</script>
+</body>
+</html>

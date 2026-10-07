@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from vecta.protocol import messages as m
-from vecta.server import labels
+from vecta.server import frame_labels, labels
 from vecta.server.audio import FRAME_BYTES, FRAME_MS, Listener, Recorder
 from vecta.server.ground import parse_box
 from vecta.server.inbox import Inbox
@@ -277,6 +277,39 @@ def test_recorder_and_labels(tmp_path: Path):
     assert not (rec.dir / "u_0003.wav").exists()
     bad = {"items": [{"session": "x", "id": "u_1"}]}
     assert client.post("/label/batch", json=bad).status_code == 400
+
+
+def test_frame_labels(tmp_path: Path):
+    sess = tmp_path / "sessions" / "abcdef1"
+    sess.mkdir(parents=True)
+    (sess / "judged_0000.jpg").write_bytes(b"\xff\xd8")
+    judged = [
+        {"file": "judged_0000.jpg", "task": "tell me when u see a tv", "status": "found"},
+        # not an object the benchmark asks about
+        {"file": "judged_0001.jpg", "task": "show me the boiler", "status": "found"},
+    ]
+    (sess / "judged.jsonl").write_text("".join(json.dumps(j) + "\n" for j in judged))
+    (tmp_path / "calibration").mkdir()
+    preds = {"exact": {"abcdef1/judged_0000.jpg": {"yes": False, "margin": -1.5}}}
+    (tmp_path / "calibration" / "frame_preds.json").write_text(json.dumps(preds))
+
+    app = FastAPI()
+    app.include_router(frame_labels.router(tmp_path))
+    client = TestClient(app)
+    data = client.get("/label/frames/items").json()
+    assert [f["key"] for f in data["items"]] == ["abcdef1/judged_0000.jpg"]
+    frame = data["items"][0]
+    assert frame["object"] == "tv" and frame["judged"]
+    assert frame["answers"]["exact"]["margin"] == -1.5
+    assert client.get("/label/frames/img/abcdef1/judged_0000.jpg").status_code == 200
+    assert client.get("/label/frames/img/abcdef1/..%2Fx.jpg").status_code == 404
+    body = {"key": "abcdef1/judged_0000.jpg", "present": "no", "note": "monitor"}
+    assert client.post("/label/frames", json=body).status_code == 200
+    assert client.post("/label/frames", json={**body, "present": "maybe"}).status_code == 422
+    assert client.post("/label/frames", json={**body, "key": "../x"}).status_code == 422
+    client.post("/label/frames", json={**body, "present": "unsure"})
+    labels = client.get("/label/frames/items").json()["labels"]
+    assert labels[body["key"]]["present"] == "unsure"  # the last save wins
 
 
 def test_prune_keeps_only_labelled_recordings(tmp_path: Path):
